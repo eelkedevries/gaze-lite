@@ -2,11 +2,42 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <title>gaze-lite</title>
   </head>
   <body>
-    <div id="app"></div>
+    <!-- Full-viewport canvas for calibration targets and the red gaze dot. -->
+    <canvas id="gaze-canvas" class="gaze-canvas"></canvas>
+
+    <main class="page">
+      <header class="header">
+        <h1 class="title">gaze-lite</h1>
+        <p class="subtitle">Browser-only webcam gaze demo</p>
+      </header>
+
+      <section class="preview" aria-label="Camera preview">
+        <video id="video" class="preview__video" playsinline muted></video>
+        <canvas id="overlay" class="preview__overlay"></canvas>
+      </section>
+
+      <div class="controls">
+        <button id="btn-start" type="button">Start camera</button>
+        <button id="btn-calibrate" type="button">Run calibration</button>
+        <button id="btn-print" type="button">Print gaze</button>
+        <button id="btn-clear" type="button">Clear dot</button>
+      </div>
+
+      <p id="status" class="status" role="status" aria-live="polite">Idle</p>
+
+      <p class="privacy">
+        Camera frames are processed locally in your browser. No video or gaze
+        data is uploaded.
+      </p>
+    </main>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
