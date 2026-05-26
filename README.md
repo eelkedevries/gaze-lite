@@ -5,16 +5,17 @@ static site (GitHub Pages), with no backend and no paid APIs. The goal is a
 small app that shows an eye/video preview, draws green boxes around both eyes,
 runs a short calibration, and prints a red gaze dot on demand.
 
-> **Status:** camera access and the basic GUI are implemented (video preview,
-> overlay + full-page canvas, status line, controls). MediaPipe landmark
-> detection, eye boxes, calibration, and gaze estimation are **not implemented
-> yet** — the `Run calibration` and `Print gaze` buttons are placeholders.
+> **Status:** camera access, basic GUI, and **MediaPipe face detection** are
+> implemented. When the camera is running the app reports `Face detected` /
+> `No face detected` in the status line. Eye boxes, calibration, and gaze
+> estimation are **not implemented yet** — the `Run calibration` and `Print
+> gaze` buttons are placeholders.
 
 ## Stack
 
 - [Vite](https://vitejs.dev/) + TypeScript
 - Plain HTML / CSS / Canvas (no framework)
-- Landmark detection (planned) via [`@mediapipe/tasks-vision`](https://www.npmjs.com/package/@mediapipe/tasks-vision)
+- Face landmark detection via [`@mediapipe/tasks-vision`](https://www.npmjs.com/package/@mediapipe/tasks-vision) (MediaPipe Face Landmarker)
 
 ## Local development
 
@@ -45,6 +46,26 @@ from a phone on the same network using your machine's LAN IP.
   rejected.
 - Clear, user-facing messages are shown for the common failures: permission
   denied, no camera found, camera already in use, and insecure context.
+
+## Face tracking & model assets
+
+Face detection uses MediaPipe's **Face Landmarker**, and it runs **entirely in
+the browser** (WebAssembly) — no frames are sent anywhere. Two local assets are
+served by the app, so there is no runtime CDN dependency:
+
+- **Model:** `public/models/face_landmarker.task` (committed). To refresh or
+  re-obtain it, download the float16 model:
+  ```bash
+  curl -L -o public/models/face_landmarker.task \
+    https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+  ```
+- **WASM runtime:** copied out of `node_modules/@mediapipe/tasks-vision/wasm`
+  into `public/mediapipe/wasm/` by `scripts/copy-wasm.mjs`. This runs
+  automatically via the `predev` / `prebuild` npm hooks, so `npm run dev` and
+  `npm run build` set it up for you. The copied folder is git-ignored.
+
+If the model or WASM cannot be loaded, the app surfaces a clear
+`Face tracker error: …` message rather than failing silently.
 
 ## GitHub Pages deployment
 

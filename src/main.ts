@@ -1,5 +1,7 @@
 import './style.css';
 import { startCamera } from './camera';
+import { createFaceTracker, type FaceTracker } from './faceLandmarks';
+import type { FaceTrackingResult } from './types';
 
 // Initial GUI wiring: camera start, status handling, and canvas sizing.
 // MediaPipe, eye boxes, calibration, and gaze prediction are not wired up yet.
@@ -59,6 +61,29 @@ new ResizeObserver(resizeOverlay).observe(video);
 resizeAll();
 
 let cameraStarted = false;
+let tracker: FaceTracker | null = null;
+let latestResult: FaceTrackingResult | null = null;
+
+// Only push to the DOM when the message changes, so the rAF loop doesn't
+// rewrite the status line every frame.
+let lastStatus = '';
+function setTrackerStatus(message: string): void {
+  if (message === lastStatus) return;
+  lastStatus = message;
+  setStatus(message);
+}
+
+function detectLoop(): void {
+  if (tracker && video.readyState >= 2 && video.videoWidth > 0) {
+    latestResult = tracker.detect(video, performance.now());
+    if (latestResult.error) {
+      setTrackerStatus(`Face tracker error: ${latestResult.error}`);
+    } else {
+      setTrackerStatus(latestResult.hasFace ? 'Face detected' : 'No face detected');
+    }
+  }
+  requestAnimationFrame(detectLoop);
+}
 
 startBtn.addEventListener('click', async () => {
   if (cameraStarted) return;
@@ -72,6 +97,15 @@ startBtn.addEventListener('click', async () => {
   } catch (err) {
     setStatus(err instanceof Error ? err.message : 'Camera failed to start.');
     startBtn.disabled = false;
+    return;
+  }
+
+  setStatus('Loading face tracker');
+  try {
+    tracker = await createFaceTracker();
+    requestAnimationFrame(detectLoop);
+  } catch (err) {
+    setStatus(`Face tracker error: ${err instanceof Error ? err.message : 'failed to load'}`);
   }
 });
 
