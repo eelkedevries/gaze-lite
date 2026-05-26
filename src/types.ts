@@ -33,24 +33,34 @@ export interface FaceTrackingResult {
   error?: string;
 }
 
-/** Axis-aligned bounding box, in source-image pixel coordinates. */
-export interface BoundingBox {
+/** Axis-aligned box in normalized video-frame coordinates (x/y/w/h in [0,1]). */
+export interface EyeBox {
   x: number;
   y: number;
   width: number;
   height: number;
 }
 
-/** Per-eye region used to draw the green preview boxes. */
-export interface EyeBoxes {
-  left: BoundingBox;
-  right: BoundingBox;
-}
-
-/** Numeric features extracted from the eyes, fed into the gaze model. */
+/**
+ * Per-frame eye geometry plus a numeric feature vector, all in the video's
+ * normalized coordinate space so it stays resolution-independent. Consumed by
+ * calibration and the gaze model in later steps.
+ */
 export interface EyeFeatures {
-  /** Flat feature vector; layout defined by eyeFeatures.ts later. */
-  vector: number[];
+  leftEyeBox: EyeBox;
+  rightEyeBox: EyeBox;
+  leftEyeCenter: Point;
+  rightEyeCenter: Point;
+  /** Iris centre when the 478-point (iris) model is present; else eye centre. */
+  leftIrisLikeCenter?: Point;
+  rightIrisLikeCenter?: Point;
+  faceCenter: Point;
+  /** Inter-eye distance in normalized units; grows as the face nears the camera. */
+  faceScale: number;
+  /** Flat numeric feature vector; layout documented in eyeFeatures.ts. */
+  featureVector: number[];
+  /** 1 when both eyes are cleanly bounded, else 0. */
+  confidence: number;
 }
 
 /** One calibration observation: features captured while looking at a target. */

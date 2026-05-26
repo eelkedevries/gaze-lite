@@ -1,10 +1,12 @@
 import './style.css';
 import { startCamera } from './camera';
 import { createFaceTracker, type FaceTracker } from './faceLandmarks';
-import type { FaceTrackingResult } from './types';
+import { extractEyeFeatures } from './eyeFeatures';
+import { clearPreviewOverlay, drawEyeBoxes, resizeCanvasToDisplaySize } from './drawing';
+import type { EyeFeatures, FaceTrackingResult } from './types';
 
-// Initial GUI wiring: camera start, status handling, and canvas sizing.
-// MediaPipe, eye boxes, calibration, and gaze prediction are not wired up yet.
+// GUI wiring: camera start, face tracking, and green eye boxes on the preview.
+// Calibration and gaze prediction are not wired up yet.
 
 function requireEl<T extends Element>(selector: string): T {
   const el = document.querySelector<T>(selector);
@@ -23,30 +25,20 @@ const clearBtn = requireEl<HTMLButtonElement>('#btn-clear');
 
 const gazeCtx = gazeCanvas.getContext('2d');
 if (!gazeCtx) throw new Error('2D canvas context is unavailable');
+const overlayCtx = overlay.getContext('2d');
+if (!overlayCtx) throw new Error('2D canvas context is unavailable');
 
 function setStatus(message: string): void {
   statusEl.textContent = message;
 }
 
-// Size a canvas's backing store to a CSS display size, scaled by the device
-// pixel ratio so future drawing stays crisp on high-DPI and mobile screens.
-function sizeCanvas(canvas: HTMLCanvasElement, cssWidth: number, cssHeight: number): void {
-  const dpr = window.devicePixelRatio || 1;
-  const w = Math.max(1, Math.round(cssWidth * dpr));
-  const h = Math.max(1, Math.round(cssHeight * dpr));
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w;
-    canvas.height = h;
-  }
-}
-
 function resizeGazeCanvas(): void {
-  sizeCanvas(gazeCanvas, window.innerWidth, window.innerHeight);
+  resizeCanvasToDisplaySize(gazeCanvas, window.innerWidth, window.innerHeight);
 }
 
 function resizeOverlay(): void {
   const rect = video.getBoundingClientRect();
-  sizeCanvas(overlay, rect.width, rect.height);
+  resizeCanvasToDisplaySize(overlay, rect.width, rect.height);
 }
 
 function resizeAll(): void {
@@ -63,6 +55,8 @@ resizeAll();
 let cameraStarted = false;
 let tracker: FaceTracker | null = null;
 let latestResult: FaceTrackingResult | null = null;
+// Last frame where both eyes were cleanly tracked; kept for calibration later.
+let latestEyeFeatures: EyeFeatures | null = null;
 
 // Only push to the DOM when the message changes, so the rAF loop doesn't
 // rewrite the status line every frame.
@@ -73,13 +67,33 @@ function setTrackerStatus(message: string): void {
   setStatus(message);
 }
 
-function detectLoop(): void {
+/** Latest frame's valid eye features, for calibration in the next step. */
+export function getLatestEyeFeatures(): EyeFeatures | null {
+  return latestEyeFeatures;
+}
+
+const detectLoop = (): void => {
   if (tracker && video.readyState >= 2 && video.videoWidth > 0) {
     latestResult = tracker.detect(video, performance.now());
+    clearPreviewOverlay(overlayCtx);
+
     if (latestResult.error) {
       setTrackerStatus(`Face tracker error: ${latestResult.error}`);
+    } else if (!latestResult.hasFace) {
+      setTrackerStatus('No face detected');
     } else {
-      setTrackerStatus(latestResult.hasFace ? 'Face detected' : 'No face detected');
+      const features = extractEyeFeatures(latestResult);
+      if (features && features.confidence > 0) {
+        latestEyeFeatures = features;
+        drawEyeBoxes(overlayCtx, features, {
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+          mirror: true,
+        });
+        setTrackerStatus('Both eyes tracked');
+      } else {
+        setTrackerStatus('Face detected, eyes not stable');
+      }
     }
   }
   requestAnimationFrame(detectLoop);

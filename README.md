@@ -5,11 +5,13 @@ static site (GitHub Pages), with no backend and no paid APIs. The goal is a
 small app that shows an eye/video preview, draws green boxes around both eyes,
 runs a short calibration, and prints a red gaze dot on demand.
 
-> **Status:** camera access, basic GUI, and **MediaPipe face detection** are
-> implemented. When the camera is running the app reports `Face detected` /
-> `No face detected` in the status line. Eye boxes, calibration, and gaze
-> estimation are **not implemented yet** — the `Run calibration` and `Print
-> gaze` buttons are placeholders.
+> **Status:** camera access, GUI, **MediaPipe face detection**, and
+> **both-eye tracking boxes** are implemented. When both eyes are tracked the
+> app draws green boxes around them on the preview and reports `Both eyes
+> tracked`; otherwise it reports `Face detected, eyes not stable` or `No face
+> detected`. Calibration and gaze estimation are **not implemented yet** — the
+> `Run calibration` and `Print gaze` buttons are placeholders. The green boxes
+> indicate landmark-based eye tracking, **not** validated gaze accuracy.
 
 ## Stack
 
