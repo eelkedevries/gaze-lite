@@ -128,18 +128,21 @@ MediaPipe only provides face/eye **landmarks**; it does not tell you where on
 the screen you are looking. gaze-lite estimates that with a small **custom
 calibration model** built from your nine calibration samples:
 
-- From each frame's landmarks it derives a numeric eye-feature vector (eye-box
-  sizes, eye and iris-like centres, head scale, and where the iris sits inside
-  each eye box — see `src/eyeFeatures.ts`).
+- From each frame's landmarks it derives a small feature vector: **where the
+  iris sits inside each eye box** (left and right) — the values that actually
+  move with gaze. Absolute eye/face positions, eye-box sizes and head scale are
+  intentionally excluded because they barely change during a head-still
+  calibration and would destabilize the linear fit (see `src/eyeFeatures.ts`).
 - It fits two small **ridge regressions** (feature vector → screen x, and →
-  screen y) with standardized features and an unpenalized intercept. Ridge
-  regularization keeps the fit stable given only nine points
-  (`src/gazeModel.ts`).
+  screen y) with standardized features (with a floored divisor) and an
+  unpenalized intercept. The ridge penalty plus the std floor keep coefficients
+  bounded so predictions don't extrapolate off-screen (`src/gazeModel.ts`).
 - **Print gaze** toggles **continuous** gaze tracking: while on, every frame the
-  latest eye-feature vector is fed through the model and the red dot is redrawn
-  at the predicted point (clamped to the viewport), so the dot follows your
-  gaze in real time. Click it again to stop (the last dot stays put); **Clear
-  dot** removes it. If both eyes drop out, the dot holds its last position.
+  latest feature vector is fed through the model and the red dot is redrawn at
+  the predicted point (exponentially smoothed and clamped to the viewport), so
+  the dot follows your gaze in real time. Click it again to stop (the last dot
+  stays put); **Clear dot** removes it. If both eyes drop out, the dot holds its
+  last position.
 
 Because the model maps to **screen coordinates**, it is tied to the current
 window/screen size; a resize or orientation change invalidates it and you must
@@ -210,11 +213,11 @@ particular:
 ## Development roadmap
 
 Done: scaffold + Pages deploy, camera + GUI, MediaPipe face detection, eye
-boxes, 9-point calibration, gaze model, and continuous `Print gaze`.
+boxes, 9-point calibration, gaze model, and continuous `Print gaze` with
+exponential smoothing.
 
 Possible next steps (not implemented):
 
-- Smoothing/filtering of the live gaze point to reduce jitter.
 - Scaling predictions on resize instead of invalidating calibration.
 - Persisting calibration (e.g. `localStorage`) across reloads.
 - A richer/non-linear model and an on-screen accuracy check.

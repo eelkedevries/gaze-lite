@@ -17,7 +17,7 @@ import {
   type CalibrationState,
 } from './calibration';
 import { fitGazeModel, type GazeModel } from './gazeModel';
-import type { EyeFeatures, FaceTrackingResult } from './types';
+import type { EyeFeatures, FaceTrackingResult, Point } from './types';
 
 // GUI wiring: camera start/stop, face tracking, green eye boxes, the 9-point
 // calibration sweep, the calibrated gaze model, and the Print gaze red dot.
@@ -88,11 +88,17 @@ let gazeModel: GazeModel | null = null;
 // When on, the render loop predicts and redraws the gaze dot every frame so it
 // follows the user's gaze. Toggled by Print gaze; cleared by Clear dot.
 let liveGaze = false;
+// Exponentially-smoothed live gaze point, to damp per-frame jitter.
+let smoothedGaze: Point | null = null;
 // Once calibration ends, hold a steady status instead of live tracking text.
 let postCalibrationStatus: string | null = null;
 
+// EMA weight for the live dot: lower = smoother but laggier.
+const GAZE_SMOOTHING = 0.35;
+
 const setLiveGaze = (on: boolean): void => {
   liveGaze = on;
+  smoothedGaze = null; // start each tracking session fresh
   printBtn.textContent = on ? 'Stop gaze' : 'Print gaze';
 };
 
@@ -183,11 +189,17 @@ const detectLoop = (): void => {
       stepCalibration(now, features);
     } else if (liveGaze && gazeModel) {
       if (features) {
-        const gaze = gazeModel.predict(features.featureVector);
+        const raw = gazeModel.predict(features.featureVector);
+        smoothedGaze = smoothedGaze
+          ? {
+              x: smoothedGaze.x + GAZE_SMOOTHING * (raw.x - smoothedGaze.x),
+              y: smoothedGaze.y + GAZE_SMOOTHING * (raw.y - smoothedGaze.y),
+            }
+          : raw;
         clearGazeCanvas(gazeCtx);
-        drawGazeDot(gazeCtx, gaze);
-        const x = Math.round(gaze.x * window.innerWidth);
-        const y = Math.round(gaze.y * window.innerHeight);
+        drawGazeDot(gazeCtx, smoothedGaze);
+        const x = Math.round(smoothedGaze.x * window.innerWidth);
+        const y = Math.round(smoothedGaze.y * window.innerHeight);
         setStatus(`Gaze: x=${x}, y=${y}`);
       } else {
         // Tracking dropped this frame: keep the last dot, just report it.

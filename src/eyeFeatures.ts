@@ -56,18 +56,17 @@ function relativePosition(point: Point, box: EyeBox): Point {
 
 /**
  * Builds {@link EyeFeatures} from a face-tracking result, or returns `null` when
- * no face / too few landmarks are available. The `featureVector` layout is:
+ * no face / too few landmarks are available.
  *
- *   0-1   left eye centre x, y
- *   2-3   right eye centre x, y
- *   4-5   left eye box width, height
- *   6-7   right eye box width, height
- *   8-9   face centre x, y
- *   10    face scale (inter-eye distance)
- *   11-12 left iris position within its eye box (x, y)
- *   13-14 right iris position within its eye box (x, y)
- *   15-16 left eye centre relative to face, scaled (x, y)
- *   17-18 right eye centre relative to face, scaled (x, y)
+ * The `featureVector` deliberately contains ONLY the iris position within each
+ * eye box — the values that actually move as gaze shifts during a head-still
+ * calibration. Absolute eye/face positions and eye-box sizes were dropped: they
+ * barely vary during calibration, so they were near-zero-variance dimensions
+ * that made the linear gaze model extrapolate wildly (pinning the dot to a
+ * screen corner). Layout:
+ *
+ *   0-1  left iris position within its eye box (x, y)
+ *   2-3  right iris position within its eye box (x, y)
  */
 export function extractEyeFeatures(result: FaceTrackingResult): EyeFeatures | null {
   const lm = result.landmarks;
@@ -102,18 +101,7 @@ export function extractEyeFeatures(result: FaceTrackingResult): EyeFeatures | nu
   const leftRel = relativePosition(leftIrisLikeCenter, leftEyeBox);
   const rightRel = relativePosition(rightIrisLikeCenter, rightEyeBox);
 
-  const featureVector = [
-    leftEyeCenter.x, leftEyeCenter.y,
-    rightEyeCenter.x, rightEyeCenter.y,
-    leftEyeBox.width, leftEyeBox.height,
-    rightEyeBox.width, rightEyeBox.height,
-    faceCenter.x, faceCenter.y,
-    faceScale,
-    leftRel.x, leftRel.y,
-    rightRel.x, rightRel.y,
-    (leftEyeCenter.x - faceCenter.x) / faceScale, (leftEyeCenter.y - faceCenter.y) / faceScale,
-    (rightEyeCenter.x - faceCenter.x) / faceScale, (rightEyeCenter.y - faceCenter.y) / faceScale,
-  ];
+  const featureVector = [leftRel.x, leftRel.y, rightRel.x, rightRel.y];
 
   const confidence =
     leftEyeBox.width > 0 &&

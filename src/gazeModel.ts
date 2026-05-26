@@ -5,10 +5,14 @@
 
 import type { CalibrationSample, Point } from './types';
 
-// Small ridge penalty: enough to keep coefficients stable when there are more
-// features than calibration points (9 samples, ~19 features), without washing
-// out the fit. Applied to feature weights only, not the intercept.
-const RIDGE_LAMBDA = 1e-2;
+// Ridge penalty (applied to feature weights, not the intercept). Sized to tame
+// the strong collinearity between the left/right iris features (both eyes move
+// together) so coefficients can't grow large and overshoot the screen.
+const RIDGE_LAMBDA = 1.0;
+// Floor on the per-feature standard deviation. Without it, a feature that
+// barely varied during calibration gets a near-zero divisor, so any live drift
+// produces a huge standardized value and the prediction shoots off-screen.
+const STD_FLOOR = 1e-2;
 const MIN_SAMPLES = 3;
 const EPSILON = 1e-6;
 
@@ -44,7 +48,7 @@ export function fitGazeModel(samples: CalibrationSample[]): GazeModel {
     }
   }
   for (let j = 0; j < d; j++) {
-    std[j] = Math.sqrt(std[j] / samples.length) || 1; // guard zero variance
+    std[j] = Math.max(Math.sqrt(std[j] / samples.length), STD_FLOOR);
   }
 
   // Design rows: [1, standardized features]; p = d + 1 (intercept at index 0).
