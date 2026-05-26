@@ -63,9 +63,10 @@ export interface EyeFeatures {
   confidence: number;
 }
 
-/** One calibration observation: features captured while looking at a target. */
+/** One calibration observation: averaged features while looking at a target. */
 export interface CalibrationSample {
-  features: EyeFeatures;
+  /** Averaged eye-feature vector captured at the target. */
+  featureVector: number[];
   /** Screen target the user was looking at, in normalized [0,1] coords. */
   target: Point;
 }

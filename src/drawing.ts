@@ -1,7 +1,7 @@
 // Canvas drawing for the camera-preview overlay: green eye-tracking boxes.
 // The red gaze dot and calibration targets are drawn in later steps.
 
-import type { EyeBox, EyeFeatures } from './types';
+import type { EyeBox, EyeFeatures, Point } from './types';
 
 const EYE_BOX_COLOR = '#22c55e';
 
@@ -31,6 +31,56 @@ export function resizeCanvasToDisplaySize(
 
 export function clearPreviewOverlay(ctx: CanvasRenderingContext2D): void {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+}
+
+export function clearGazeCanvas(ctx: CanvasRenderingContext2D): void {
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+}
+
+/**
+ * Draws a high-contrast calibration target at `point` (normalized [0,1] of the
+ * full-viewport gaze canvas): a white disc with a dark outline and a red centre
+ * dot, so it reads clearly on light or dark backgrounds. `label` (e.g.
+ * "Calibration 3 / 9") is drawn beneath it when provided.
+ */
+export function drawCalibrationTarget(
+  ctx: CanvasRenderingContext2D,
+  point: Point,
+  label?: string,
+): void {
+  const cw = ctx.canvas.width;
+  const ch = ctx.canvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  const x = point.x * cw;
+  const y = point.y * ch;
+  const r = Math.max(16, 20 * dpr);
+
+  ctx.save();
+  ctx.fillStyle = '#fff';
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = Math.max(2, 3 * dpr);
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#dc2626';
+  ctx.beginPath();
+  ctx.arc(x, y, Math.max(4, 5 * dpr), 0, Math.PI * 2);
+  ctx.fill();
+
+  if (label) {
+    ctx.font = `${Math.max(14, 15 * dpr)}px system-ui, -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const ty = y + r + Math.max(6, 8 * dpr);
+    ctx.lineWidth = Math.max(2, 3 * dpr);
+    ctx.strokeStyle = '#111';
+    ctx.strokeText(label, x, ty);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, x, ty);
+  }
+  ctx.restore();
 }
 
 /**

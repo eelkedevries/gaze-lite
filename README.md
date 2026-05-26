@@ -5,13 +5,14 @@ static site (GitHub Pages), with no backend and no paid APIs. The goal is a
 small app that shows an eye/video preview, draws green boxes around both eyes,
 runs a short calibration, and prints a red gaze dot on demand.
 
-> **Status:** camera access, GUI, **MediaPipe face detection**, and
-> **both-eye tracking boxes** are implemented. When both eyes are tracked the
-> app draws green boxes around them on the preview and reports `Both eyes
-> tracked`; otherwise it reports `Face detected, eyes not stable` or `No face
-> detected`. Calibration and gaze estimation are **not implemented yet** — the
-> `Run calibration` and `Print gaze` buttons are placeholders. The green boxes
-> indicate landmark-based eye tracking, **not** validated gaze accuracy.
+> **Status:** camera access, GUI, **MediaPipe face detection**, **both-eye
+> tracking boxes**, and a **9-point calibration sweep** are implemented. When
+> both eyes are tracked the app draws green boxes around them and reports `Both
+> eyes tracked`. `Run calibration` runs the 9-point sweep and stores the
+> collected samples in memory. **Gaze estimation is not implemented yet**, so
+> `Print gaze` stays disabled until the next step. The green boxes indicate
+> landmark-based eye tracking, **not** validated gaze accuracy. A `Stop camera`
+> button releases the webcam and clears the preview.
 
 ## Stack
 
@@ -68,6 +69,28 @@ served by the app, so there is no runtime CDN dependency:
 
 If the model or WASM cannot be loaded, the app surfaces a clear
 `Face tracker error: …` message rather than failing silently.
+
+## Calibration
+
+Clicking **Run calibration** runs a **9-point sweep** (corners, edge midpoints,
+and centre). For each target the app shows a high-contrast dot, waits briefly
+for your gaze to settle, then averages the eye-feature vectors collected over a
+short window — accepting only frames where **both eyes are tracked**. The nine
+averaged samples (each paired with its on-screen target) are stored in memory.
+A point with too few good samples is retried once; if it still fails, the run
+stops with a clear status. **Stop camera** (or starting a new run) cancels an
+in-progress calibration.
+
+> **Note:** calibration only *collects* samples right now. The gaze model and
+> the `Print gaze` red dot are implemented in the next step, so `Print gaze`
+> stays disabled after calibration completes.
+
+For a good calibration:
+
+- Keep your head reasonably still.
+- Use good, even lighting.
+- Look directly at each target dot until it moves on.
+- Keep your whole face visible to the camera.
 
 ## GitHub Pages deployment
 
