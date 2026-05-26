@@ -6,23 +6,12 @@ export interface Point {
   y: number;
 }
 
-/** Backward-compatible alias used by placeholder modules; prefer `Point`. */
-export type Point2D = Point;
-
 /** A landmark in MediaPipe's normalized space: x/y in [0,1], z relative. */
 export interface NormalisedPoint {
   x: number;
   y: number;
   z?: number;
 }
-
-/** High-level tracker state, decoupled from MediaPipe's object shapes. */
-export type TrackingStatus =
-  | 'idle'
-  | 'loading'
-  | 'face-detected'
-  | 'no-face'
-  | 'error';
 
 /** Normalized output of one face-detection frame. */
 export interface FaceTrackingResult {
@@ -70,11 +59,3 @@ export interface CalibrationSample {
   /** Screen target the user was looking at, in normalized [0,1] coords. */
   target: Point;
 }
-
-/** Predicted on-screen gaze location, in normalized [0,1] coords. */
-export interface GazePrediction {
-  point: Point;
-  confidence?: number;
-}
-
-export type AppPhase = 'idle' | 'camera' | 'calibrating' | 'tracking';

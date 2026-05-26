@@ -15,17 +15,25 @@ export interface FaceTracker {
 }
 
 export async function createFaceTracker(): Promise<FaceTracker> {
-  const fileset = await FilesetResolver.forVisionTasks(WASM_PATH);
-  const landmarker = await FaceLandmarker.createFromOptions(fileset, {
-    baseOptions: { modelAssetPath: MODEL_PATH },
-    runningMode: 'VIDEO',
-    numFaces: 1,
-    minFaceDetectionConfidence: 0.5,
-    minFacePresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5,
-    outputFaceBlendshapes: false,
-    outputFacialTransformationMatrixes: false,
-  });
+  let landmarker: FaceLandmarker;
+  try {
+    const fileset = await FilesetResolver.forVisionTasks(WASM_PATH);
+    landmarker = await FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: MODEL_PATH },
+      runningMode: 'VIDEO',
+      numFaces: 1,
+      minFaceDetectionConfidence: 0.5,
+      minFacePresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+      outputFaceBlendshapes: false,
+      outputFacialTransformationMatrixes: false,
+    });
+  } catch {
+    // Most often a missing/blocked model or WASM asset, or no network.
+    throw new Error(
+      'could not load the face model or runtime. Check your connection and that the model asset is deployed.',
+    );
+  }
 
   // detectForVideo rejects non-monotonic timestamps; clamp to be safe.
   let lastTimestamp = -1;

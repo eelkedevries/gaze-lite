@@ -81,12 +81,8 @@ let cameraStarted = false;
 let streaming = false;
 let tracker: FaceTracker | null = null;
 let latestResult: FaceTrackingResult | null = null;
-// Last frame where both eyes were cleanly tracked; kept for the gaze model.
-let latestEyeFeatures: EyeFeatures | null = null;
 // Active calibration run, or null when not calibrating.
 let calibration: CalibrationState | null = null;
-// Averaged samples from the most recent successful calibration.
-let calibrationSamples: CalibrationSample[] = [];
 // Fitted gaze model, or null until a successful calibration.
 let gazeModel: GazeModel | null = null;
 // When on, the render loop predicts and redraws the gaze dot every frame so it
@@ -100,18 +96,7 @@ const setLiveGaze = (on: boolean): void => {
   printBtn.textContent = on ? 'Stop gaze' : 'Print gaze';
 };
 
-/** Latest frame's valid eye features, used to predict the current gaze point. */
-export function getLatestEyeFeatures(): EyeFeatures | null {
-  return latestEyeFeatures;
-}
-
-/** Averaged calibration samples from the last successful run. */
-export function getCalibrationSamples(): CalibrationSample[] {
-  return calibrationSamples;
-}
-
 const finishCalibration = (samples: CalibrationSample[]): void => {
-  calibrationSamples = samples;
   calibration = null;
   clearGazeCanvas(gazeCtx);
   setLiveGaze(false);
@@ -144,7 +129,6 @@ const failCalibration = (message: string): void => {
 const invalidateCalibration = (): void => {
   calibration = null;
   gazeModel = null;
-  calibrationSamples = [];
   setLiveGaze(false);
   printBtn.disabled = true;
   clearGazeCanvas(gazeCtx);
@@ -188,7 +172,6 @@ const detectLoop = (): void => {
       const f = extractEyeFeatures(latestResult);
       if (f && f.confidence > 0) {
         features = f;
-        latestEyeFeatures = f;
         drawEyeBoxes(overlayCtx, f, {
           videoWidth: video.videoWidth,
           videoHeight: video.videoHeight,
@@ -249,7 +232,7 @@ const stopCamera = (): void => {
 startBtn.addEventListener('click', async () => {
   if (cameraStarted) return;
   startBtn.disabled = true;
-  setStatus('Starting camera…');
+  setStatus('Requesting camera permission…');
   try {
     await startCamera(video);
     cameraStarted = true;
@@ -262,7 +245,7 @@ startBtn.addEventListener('click', async () => {
     return;
   }
 
-  setStatus('Loading face tracker');
+  setStatus('Loading face tracker…');
   try {
     tracker = await createFaceTracker();
     streaming = true;

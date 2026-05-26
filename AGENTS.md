@@ -12,7 +12,7 @@ frames are processed locally in the browser and are never uploaded.
 
 - Vite + TypeScript
 - Plain HTML / CSS / Canvas (no framework, no React for v1)
-- Future landmark detection via `@mediapipe/tasks-vision`
+- Face landmark detection via `@mediapipe/tasks-vision` (runs locally in WASM)
 
 ## Commands
 
@@ -48,6 +48,17 @@ frames are processed locally in the browser and are never uploaded.
 
 ## Conventions
 
-- Use TypeScript interfaces where they add clarity; keep things minimal.
+- TypeScript is required; use interfaces where they add clarity; keep minimal.
 - Comments only when they explain non-obvious *why*, not *what*.
 - Prefix intentionally-unused parameters with `_` (strict tsconfig).
+- **`npm run build` must pass** (it runs `tsc` then `vite build`) before any
+  commit/push. There is no separate test/lint script yet — don't invent one.
+
+## Final response format
+
+When completing a task, end the response with exactly these sections:
+
+- `## Work done` — what was implemented and whether it succeeded.
+- `## Checks run` — each check/command run and whether it passed.
+- `## Open issues` — unresolved issues, missing tests, or assumptions.
+- `## Human actions required` — what the user must do next.

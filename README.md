@@ -9,9 +9,26 @@ runs a short calibration, and prints a red gaze dot on demand.
 > face detection**, **both-eye tracking boxes**, a **9-point calibration
 > sweep**, a **calibrated gaze model**, and **`Print gaze`**, which toggles a
 > red dot that **continuously follows** your estimated gaze. Calibration is
-> invalidated on a viewport
-> resize / orientation change (recalibrate when prompted). Estimates are
-> **approximate** — this is a demo, not a validated/scientific eye tracker.
+> invalidated on a viewport resize / orientation change (recalibrate when
+> prompted). Estimates are **approximate** — this is a demo, not a
+> validated/scientific eye tracker.
+
+## Live demo
+
+**https://eelkedevries.github.io/gaze-lite/**
+
+(Served over HTTPS, which is required for camera access.)
+
+## Features
+
+- **Start / Stop camera** with the front-facing camera preferred on mobile.
+- Live **face detection** and **green boxes around both eyes** while tracked.
+- **9-point calibration** sweep with on-screen targets and progress.
+- A small **calibrated gaze model** (ridge regression) fitted in the browser.
+- **Print gaze** — a red dot that **continuously follows** your estimated gaze,
+  plus **Clear dot**.
+- Clear status messages for every state and failure mode.
+- 100% client-side: **no backend, no uploads, no analytics**.
 
 ## Stack
 
@@ -48,6 +65,20 @@ from a phone on the same network using your machine's LAN IP.
   rejected.
 - Clear, user-facing messages are shown for the common failures: permission
   denied, no camera found, camera already in use, and insecure context.
+
+## Browser & device support
+
+Targets modern evergreen browsers on **Android, Windows, and Linux** (Chrome,
+Edge, Firefox; WebKit/Safari should work but is less tested). It needs
+`getUserMedia`, WebAssembly, and `ResizeObserver` — all standard in current
+browsers.
+
+**Testing on Android:** open the **live demo** (HTTPS) on the phone — that is
+the simplest path, since the camera needs a secure context. Then Start camera,
+allow permission (front camera is requested), and run a calibration. The UI is
+touch-friendly and the canvases re-fit on orientation change (note: rotating
+the device counts as a viewport change and invalidates calibration, so
+recalibrate afterwards).
 
 ## Face tracking & model assets
 
@@ -153,5 +184,38 @@ particular:
 
 ## Troubleshooting
 
-_TODO_ — to be filled in (camera permissions, secure-context requirements,
-blank Pages site / wrong `base`, etc.).
+- **Clicking *Start camera* does nothing / no permission prompt.** The page
+  must be a *secure context*. Use `http://localhost` in dev or the HTTPS live
+  demo — a plain-HTTP LAN IP (e.g. `http://192.168.x.x`) blocks the camera.
+- **"Camera permission denied".** Allow camera access for the site in the
+  browser's address-bar / site settings, then reload and retry.
+- **"The camera is already in use".** Another tab or app holds the camera.
+  Close it and retry.
+- **"Face tracker error: could not load the face model or runtime".** The
+  MediaPipe model/WASM assets did not load — check your connection and that
+  `public/models/face_landmarker.task` and `public/mediapipe/wasm/` are
+  deployed (the WASM is copied by `scripts/copy-wasm.mjs` on `dev`/`build`).
+- **Blank page on GitHub Pages, or 404s for `/assets/...`.** Pages must serve
+  the **built** site: set **Settings → Pages → Source → GitHub Actions** (not
+  "Deploy from a branch"). Also ensure Vite's `base` (`/gaze-lite/`) matches the
+  repository name. *View Source* should reference `…/gaze-lite/assets/…js`, not
+  `/src/main.ts`.
+- **Calibration keeps failing at a point.** Improve lighting, hold your head
+  still, and keep both eyes clearly visible; very dark scenes or strong glasses
+  reflections can prevent stable tracking.
+- **The dot suddenly stops following / "Viewport changed".** Resizing the
+  window or rotating the device invalidates calibration — run calibration
+  again.
+
+## Development roadmap
+
+Done: scaffold + Pages deploy, camera + GUI, MediaPipe face detection, eye
+boxes, 9-point calibration, gaze model, and continuous `Print gaze`.
+
+Possible next steps (not implemented):
+
+- Smoothing/filtering of the live gaze point to reduce jitter.
+- Scaling predictions on resize instead of invalidating calibration.
+- Persisting calibration (e.g. `localStorage`) across reloads.
+- A richer/non-linear model and an on-screen accuracy check.
+- An automated test suite (there is none yet).

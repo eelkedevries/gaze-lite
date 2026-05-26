@@ -3,6 +3,9 @@
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   line-height: 1.5;
   --accent: #2563eb;
+  /* Keep mobile browsers from auto-inflating text on rotation. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 * {
@@ -25,8 +28,10 @@ body {
 .gaze-canvas {
   position: fixed;
   inset: 0;
-  width: 100vw;
-  height: 100vh;
+  /* 100% of the fixed viewport — avoids the horizontal scrollbar that 100vw
+     can introduce and the mobile-URL-bar mismatch of 100vh. */
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   z-index: 1000;
 }
@@ -96,6 +101,7 @@ button {
   background: var(--accent);
   color: #fff;
   cursor: pointer;
+  touch-action: manipulation; /* remove the 300ms tap delay on mobile */
 }
 
 button:disabled {
