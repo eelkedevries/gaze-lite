@@ -7,6 +7,7 @@ import {
   clearPreviewOverlay,
   drawCalibrationTarget,
   drawEyeBoxes,
+  drawGazeDot,
   resizeCanvasToDisplaySize,
 } from './drawing';
 import {
@@ -15,10 +16,11 @@ import {
   type CalibrationSample,
   type CalibrationState,
 } from './calibration';
+import { fitGazeModel, type GazeModel } from './gazeModel';
 import type { EyeFeatures, FaceTrackingResult } from './types';
 
-// GUI wiring: camera start/stop, face tracking, green eye boxes, and the
-// 9-point calibration sweep. Gaze prediction is not wired up yet.
+// GUI wiring: camera start/stop, face tracking, green eye boxes, the 9-point
+// calibration sweep, the calibrated gaze model, and the Print gaze red dot.
 
 function requireEl<T extends Element>(selector: string): T {
   const el = document.querySelector<T>(selector);
@@ -63,8 +65,14 @@ function resizeAll(): void {
   resizeOverlay();
 }
 
-window.addEventListener('resize', resizeAll);
-window.addEventListener('orientationchange', resizeAll);
+const onViewportChange = (): void => {
+  resizeAll();
+  // A resize / orientation change moves screen coordinates, so any existing
+  // calibration no longer maps correctly — drop it and ask to recalibrate.
+  if (gazeModel || calibration) invalidateCalibration();
+};
+window.addEventListener('resize', onViewportChange);
+window.addEventListener('orientationchange', onViewportChange);
 video.addEventListener('loadedmetadata', resizeOverlay);
 new ResizeObserver(resizeOverlay).observe(video);
 resizeAll();
@@ -79,15 +87,19 @@ let latestEyeFeatures: EyeFeatures | null = null;
 let calibration: CalibrationState | null = null;
 // Averaged samples from the most recent successful calibration.
 let calibrationSamples: CalibrationSample[] = [];
+// Fitted gaze model, or null until a successful calibration.
+let gazeModel: GazeModel | null = null;
+// Whether both eyes were tracked on the most recent frame.
+let eyesTrackedNow = false;
 // Once calibration ends, hold a steady status instead of live tracking text.
 let postCalibrationStatus: string | null = null;
 
-/** Latest frame's valid eye features, for the gaze model in the next step. */
+/** Latest frame's valid eye features, used to predict the current gaze point. */
 export function getLatestEyeFeatures(): EyeFeatures | null {
   return latestEyeFeatures;
 }
 
-/** Averaged calibration samples from the last successful run, for the model. */
+/** Averaged calibration samples from the last successful run. */
 export function getCalibrationSamples(): CalibrationSample[] {
   return calibrationSamples;
 }
@@ -97,15 +109,37 @@ const finishCalibration = (samples: CalibrationSample[]): void => {
   calibration = null;
   clearGazeCanvas(gazeCtx);
   calibrateBtn.disabled = false;
-  // Print gaze stays disabled until the gaze model lands in the next step.
-  postCalibrationStatus = 'Calibration complete';
+  try {
+    gazeModel = fitGazeModel(samples);
+    printBtn.disabled = false;
+    postCalibrationStatus = 'Calibrated — ready to print gaze';
+  } catch (err) {
+    gazeModel = null;
+    printBtn.disabled = true;
+    postCalibrationStatus = `Calibration failed: ${
+      err instanceof Error ? err.message : 'could not fit gaze model'
+    }`;
+  }
 };
 
 const failCalibration = (message: string): void => {
   calibration = null;
+  gazeModel = null;
   clearGazeCanvas(gazeCtx);
   calibrateBtn.disabled = false;
+  printBtn.disabled = true;
   postCalibrationStatus = `Calibration failed: ${message}`;
+};
+
+// Calibration is screen-coordinate dependent, so a viewport change makes the
+// stored targets meaningless; invalidate and ask the user to recalibrate.
+const invalidateCalibration = (): void => {
+  calibration = null;
+  gazeModel = null;
+  calibrationSamples = [];
+  printBtn.disabled = true;
+  clearGazeCanvas(gazeCtx);
+  postCalibrationStatus = 'Viewport changed — please recalibrate';
 };
 
 const stepCalibration = (now: number, features: EyeFeatures | null): void => {
@@ -153,6 +187,7 @@ const detectLoop = (): void => {
         });
       }
     }
+    eyesTrackedNow = features !== null;
 
     if (calibration) {
       stepCalibration(now, features);
@@ -174,6 +209,8 @@ const detectLoop = (): void => {
 const stopCamera = (): void => {
   streaming = false;
   calibration = null;
+  gazeModel = null;
+  eyesTrackedNow = false;
   postCalibrationStatus = null;
   const stream = video.srcObject as MediaStream | null;
   stream?.getTracks().forEach((track) => track.stop());
@@ -226,6 +263,7 @@ calibrateBtn.addEventListener('click', () => {
   }
   if (calibration) return;
   postCalibrationStatus = null;
+  gazeModel = null;
   printBtn.disabled = true;
   calibrateBtn.disabled = true;
   clearGazeCanvas(gazeCtx);
@@ -234,11 +272,26 @@ calibrateBtn.addEventListener('click', () => {
 });
 
 printBtn.addEventListener('click', () => {
-  setStatus('Gaze model not implemented yet');
+  if (!gazeModel) {
+    setStatus('Run calibration before printing gaze.');
+    return;
+  }
+  if (!eyesTrackedNow || !latestEyeFeatures) {
+    postCalibrationStatus = 'Tracking lost — keep both eyes visible, then print again.';
+    return;
+  }
+  const gaze = gazeModel.predict(latestEyeFeatures.featureVector);
+  clearGazeCanvas(gazeCtx);
+  drawGazeDot(gazeCtx, gaze);
+  const x = Math.round(gaze.x * window.innerWidth);
+  const y = Math.round(gaze.y * window.innerHeight);
+  postCalibrationStatus = `Gaze printed at x=${x}, y=${y}`;
 });
 
 clearBtn.addEventListener('click', () => {
   clearGazeCanvas(gazeCtx);
+  // Clear only the dot; keep the calibration / model intact.
+  if (gazeModel) postCalibrationStatus = 'Calibrated — ready to print gaze';
   setStatus('Gaze dot cleared');
 });
 

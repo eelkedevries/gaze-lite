@@ -38,6 +38,27 @@ export function clearGazeCanvas(ctx: CanvasRenderingContext2D): void {
 }
 
 /**
+ * Draws the red gaze dot at `point` (normalized [0,1] of the full-viewport gaze
+ * canvas). The canvas backing store is sized to the viewport, so callers just
+ * pass normalized coordinates and resize handling is automatic.
+ */
+export function drawGazeDot(ctx: CanvasRenderingContext2D, point: Point): void {
+  const cw = ctx.canvas.width;
+  const ch = ctx.canvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  const r = Math.max(8, 10 * dpr);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(point.x * cw, point.y * ch, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#ef4444';
+  ctx.fill();
+  ctx.lineWidth = Math.max(2, 2 * dpr);
+  ctx.strokeStyle = '#fff';
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
  * Draws a high-contrast calibration target at `point` (normalized [0,1] of the
  * full-viewport gaze canvas): a white disc with a dark outline and a red centre
  * dot, so it reads clearly on light or dark backgrounds. `label` (e.g.

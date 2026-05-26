@@ -5,14 +5,12 @@ static site (GitHub Pages), with no backend and no paid APIs. The goal is a
 small app that shows an eye/video preview, draws green boxes around both eyes,
 runs a short calibration, and prints a red gaze dot on demand.
 
-> **Status:** camera access, GUI, **MediaPipe face detection**, **both-eye
-> tracking boxes**, and a **9-point calibration sweep** are implemented. When
-> both eyes are tracked the app draws green boxes around them and reports `Both
-> eyes tracked`. `Run calibration` runs the 9-point sweep and stores the
-> collected samples in memory. **Gaze estimation is not implemented yet**, so
-> `Print gaze` stays disabled until the next step. The green boxes indicate
-> landmark-based eye tracking, **not** validated gaze accuracy. A `Stop camera`
-> button releases the webcam and clears the preview.
+> **Status:** the full v1 flow is implemented — camera start/stop, **MediaPipe
+> face detection**, **both-eye tracking boxes**, a **9-point calibration
+> sweep**, a **calibrated gaze model**, and **`Print gaze`**, which draws a red
+> dot at the estimated gaze location. Calibration is invalidated on a viewport
+> resize / orientation change (recalibrate when prompted). Estimates are
+> **approximate** — this is a demo, not a validated/scientific eye tracker.
 
 ## Stack
 
@@ -81,9 +79,9 @@ A point with too few good samples is retried once; if it still fails, the run
 stops with a clear status. **Stop camera** (or starting a new run) cancels an
 in-progress calibration.
 
-> **Note:** calibration only *collects* samples right now. The gaze model and
-> the `Print gaze` red dot are implemented in the next step, so `Print gaze`
-> stays disabled after calibration completes.
+When the sweep finishes, the app fits the gaze model from the nine samples,
+enables **Print gaze**, and reports `Calibrated — ready to print gaze`. If the
+model cannot be fitted, `Print gaze` stays disabled and a clear error is shown.
 
 For a good calibration:
 
@@ -91,6 +89,27 @@ For a good calibration:
 - Use good, even lighting.
 - Look directly at each target dot until it moves on.
 - Keep your whole face visible to the camera.
+
+## Gaze estimation
+
+MediaPipe only provides face/eye **landmarks**; it does not tell you where on
+the screen you are looking. gaze-lite estimates that with a small **custom
+calibration model** built from your nine calibration samples:
+
+- From each frame's landmarks it derives a numeric eye-feature vector (eye-box
+  sizes, eye and iris-like centres, head scale, and where the iris sits inside
+  each eye box — see `src/eyeFeatures.ts`).
+- It fits two small **ridge regressions** (feature vector → screen x, and →
+  screen y) with standardized features and an unpenalized intercept. Ridge
+  regularization keeps the fit stable given only nine points
+  (`src/gazeModel.ts`).
+- **Print gaze** feeds the latest eye-feature vector through the model and draws
+  a red dot at the predicted point (clamped to the viewport). If both eyes are
+  not currently tracked it reports that instead of drawing a stale dot.
+
+Because the model maps to **screen coordinates**, it is tied to the current
+window/screen size; a resize or orientation change invalidates it and you must
+recalibrate.
 
 ## GitHub Pages deployment
 
@@ -114,8 +133,20 @@ about your video or gaze leaves your device.
 
 ## Known limitations
 
-_TODO_ — to be filled in as features land (browser/device support, accuracy,
-lighting sensitivity, calibration drift, etc.).
+This is a lightweight demo, **not** a scientific or commercial-grade eye
+tracker, and is not equivalent to dedicated eye-tracking hardware. In
+particular:
+
+- **Approximate accuracy.** Gaze is estimated from a 9-point calibration and a
+  simple linear model; expect rough, not pixel-accurate, results.
+- **Sensitive to head movement.** Moving or rotating your head after
+  calibrating degrades accuracy — keep your head roughly where it was.
+- **Sensitive to lighting and camera angle.** Poor or uneven lighting and
+  off-axis cameras reduce landmark quality and accuracy.
+- **Glasses / reflections** can reduce robustness of eye and iris tracking.
+- **Device/window dependent.** Calibration maps to the current screen, so
+  resizing the window or changing orientation invalidates it — recalibrate when
+  prompted.
 
 ## Troubleshooting
 
