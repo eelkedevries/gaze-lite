@@ -7,8 +7,9 @@ runs a short calibration, and prints a red gaze dot on demand.
 
 > **Status:** the full v1 flow is implemented — camera start/stop, **MediaPipe
 > face detection**, **both-eye tracking boxes**, a **9-point calibration
-> sweep**, a **calibrated gaze model**, and **`Print gaze`**, which draws a red
-> dot at the estimated gaze location. Calibration is invalidated on a viewport
+> sweep**, a **calibrated gaze model**, and **`Print gaze`**, which toggles a
+> red dot that **continuously follows** your estimated gaze. Calibration is
+> invalidated on a viewport
 > resize / orientation change (recalibrate when prompted). Estimates are
 > **approximate** — this is a demo, not a validated/scientific eye tracker.
 
@@ -103,9 +104,11 @@ calibration model** built from your nine calibration samples:
   screen y) with standardized features and an unpenalized intercept. Ridge
   regularization keeps the fit stable given only nine points
   (`src/gazeModel.ts`).
-- **Print gaze** feeds the latest eye-feature vector through the model and draws
-  a red dot at the predicted point (clamped to the viewport). If both eyes are
-  not currently tracked it reports that instead of drawing a stale dot.
+- **Print gaze** toggles **continuous** gaze tracking: while on, every frame the
+  latest eye-feature vector is fed through the model and the red dot is redrawn
+  at the predicted point (clamped to the viewport), so the dot follows your
+  gaze in real time. Click it again to stop (the last dot stays put); **Clear
+  dot** removes it. If both eyes drop out, the dot holds its last position.
 
 Because the model maps to **screen coordinates**, it is tied to the current
 window/screen size; a resize or orientation change invalidates it and you must

@@ -89,10 +89,16 @@ let calibration: CalibrationState | null = null;
 let calibrationSamples: CalibrationSample[] = [];
 // Fitted gaze model, or null until a successful calibration.
 let gazeModel: GazeModel | null = null;
-// Whether both eyes were tracked on the most recent frame.
-let eyesTrackedNow = false;
+// When on, the render loop predicts and redraws the gaze dot every frame so it
+// follows the user's gaze. Toggled by Print gaze; cleared by Clear dot.
+let liveGaze = false;
 // Once calibration ends, hold a steady status instead of live tracking text.
 let postCalibrationStatus: string | null = null;
+
+const setLiveGaze = (on: boolean): void => {
+  liveGaze = on;
+  printBtn.textContent = on ? 'Stop gaze' : 'Print gaze';
+};
 
 /** Latest frame's valid eye features, used to predict the current gaze point. */
 export function getLatestEyeFeatures(): EyeFeatures | null {
@@ -108,6 +114,7 @@ const finishCalibration = (samples: CalibrationSample[]): void => {
   calibrationSamples = samples;
   calibration = null;
   clearGazeCanvas(gazeCtx);
+  setLiveGaze(false);
   calibrateBtn.disabled = false;
   try {
     gazeModel = fitGazeModel(samples);
@@ -126,6 +133,7 @@ const failCalibration = (message: string): void => {
   calibration = null;
   gazeModel = null;
   clearGazeCanvas(gazeCtx);
+  setLiveGaze(false);
   calibrateBtn.disabled = false;
   printBtn.disabled = true;
   postCalibrationStatus = `Calibration failed: ${message}`;
@@ -137,6 +145,7 @@ const invalidateCalibration = (): void => {
   calibration = null;
   gazeModel = null;
   calibrationSamples = [];
+  setLiveGaze(false);
   printBtn.disabled = true;
   clearGazeCanvas(gazeCtx);
   postCalibrationStatus = 'Viewport changed — please recalibrate';
@@ -187,10 +196,20 @@ const detectLoop = (): void => {
         });
       }
     }
-    eyesTrackedNow = features !== null;
-
     if (calibration) {
       stepCalibration(now, features);
+    } else if (liveGaze && gazeModel) {
+      if (features) {
+        const gaze = gazeModel.predict(features.featureVector);
+        clearGazeCanvas(gazeCtx);
+        drawGazeDot(gazeCtx, gaze);
+        const x = Math.round(gaze.x * window.innerWidth);
+        const y = Math.round(gaze.y * window.innerHeight);
+        setStatus(`Gaze: x=${x}, y=${y}`);
+      } else {
+        // Tracking dropped this frame: keep the last dot, just report it.
+        setStatus('Gaze tracking — keep both eyes visible');
+      }
     } else if (postCalibrationStatus) {
       setStatus(postCalibrationStatus);
     } else if (latestResult.error) {
@@ -210,7 +229,7 @@ const stopCamera = (): void => {
   streaming = false;
   calibration = null;
   gazeModel = null;
-  eyesTrackedNow = false;
+  setLiveGaze(false);
   postCalibrationStatus = null;
   const stream = video.srcObject as MediaStream | null;
   stream?.getTracks().forEach((track) => track.stop());
@@ -264,6 +283,7 @@ calibrateBtn.addEventListener('click', () => {
   if (calibration) return;
   postCalibrationStatus = null;
   gazeModel = null;
+  setLiveGaze(false);
   printBtn.disabled = true;
   calibrateBtn.disabled = true;
   clearGazeCanvas(gazeCtx);
@@ -271,24 +291,25 @@ calibrateBtn.addEventListener('click', () => {
   setStatus('Calibration 1 / 9 — get ready…');
 });
 
+// Toggles continuous gaze tracking: while on, the render loop redraws the dot
+// at the predicted gaze every frame. Click again (or Clear dot) to stop.
 printBtn.addEventListener('click', () => {
   if (!gazeModel) {
     setStatus('Run calibration before printing gaze.');
     return;
   }
-  if (!eyesTrackedNow || !latestEyeFeatures) {
-    postCalibrationStatus = 'Tracking lost — keep both eyes visible, then print again.';
-    return;
+  if (liveGaze) {
+    setLiveGaze(false);
+    // Leave the last dot frozen on screen; Clear dot removes it.
+    postCalibrationStatus = 'Gaze tracking stopped';
+  } else {
+    setLiveGaze(true);
+    postCalibrationStatus = null;
   }
-  const gaze = gazeModel.predict(latestEyeFeatures.featureVector);
-  clearGazeCanvas(gazeCtx);
-  drawGazeDot(gazeCtx, gaze);
-  const x = Math.round(gaze.x * window.innerWidth);
-  const y = Math.round(gaze.y * window.innerHeight);
-  postCalibrationStatus = `Gaze printed at x=${x}, y=${y}`;
 });
 
 clearBtn.addEventListener('click', () => {
+  setLiveGaze(false);
   clearGazeCanvas(gazeCtx);
   // Clear only the dot; keep the calibration / model intact.
   if (gazeModel) postCalibrationStatus = 'Calibrated — ready to print gaze';
