@@ -64,6 +64,8 @@ const logMsg = requireEl<HTMLSpanElement>('#log-msg');
 const logTs = requireEl<HTMLSpanElement>('#log-ts');
 const logCaret = requireEl<HTMLSpanElement>('#log-caret');
 const logBody = requireEl<HTMLDivElement>('#log-body');
+const logEntries = requireEl<HTMLDivElement>('#log-entries');
+const logClear = requireEl<HTMLButtonElement>('#log-clear');
 
 function getCtx(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const ctx = canvas.getContext('2d');
@@ -127,7 +129,7 @@ function addLog(sev: Severity, msg: string): void {
 
 function renderLogBody(): void {
   // Oldest-first source + CSS column-reverse ⇒ newest at the top.
-  logBody.innerHTML = [...log]
+  logEntries.innerHTML = [...log]
     .reverse()
     .map(
       (e) =>
@@ -144,6 +146,11 @@ logStrip.addEventListener('click', () => {
   logCaret.textContent = logOpen ? '▴' : '▾';
   logStrip.setAttribute('aria-expanded', String(logOpen));
   if (logOpen) renderLogBody();
+});
+
+logClear.addEventListener('click', () => {
+  log.length = 0;
+  addLog('ok', 'Log cleared');
 });
 
 // ── Readouts ─────────────────────────────────────────────────────────────
@@ -266,16 +273,11 @@ function finishCalibration(samples: CalibrationState['samples']): void {
 
 // ── Sanity check ─────────────────────────────────────────────────────────
 function cornerCenter(c: Corner): { x: number; y: number } {
-  const m = 52; // 24px inset + 28px half of the 56px box
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  const map = {
-    tl: { x: m, y: m },
-    tr: { x: w - m, y: m },
-    bl: { x: m, y: h - m },
-    br: { x: w - m, y: h - m },
-  } as const;
-  return map[c];
+  // Read the actual marker position so it stays correct wherever CSS places it.
+  const el = sanityLayer.querySelector<HTMLElement>(`.corner.${c}`);
+  if (!el) return { x: 0, y: 0 };
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 
 function setCornerActive(c: Corner | null): void {

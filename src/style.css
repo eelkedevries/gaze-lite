@@ -111,7 +111,7 @@ body {
 
 .toolbar {
   position: fixed;
-  top: 16px;
+  bottom: 16px;
   left: 16px;
   z-index: 25;
   display: flex;
@@ -289,15 +289,49 @@ body {
   flex-shrink: 0;
 }
 
-/* Expanded log body */
+/* Expanded log body — sits ABOVE the rest of the toolbar (which docks at the
+   bottom of the screen), so it opens upward. */
 .toolbar .tb-log-body {
-  border-top: 1px solid var(--line-soft);
-  max-height: 220px;
+  order: -1;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+}
+.toolbar .tb-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-bottom: 1px dashed var(--line-soft);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.toolbar .tb-log-clear {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.toolbar .tb-log-clear:hover { color: var(--fg-0); border-color: var(--fg-3); }
+.toolbar .tb-log-entries {
+  max-height: 200px;
   overflow: auto;
   display: flex;
   flex-direction: column-reverse;
   padding: 4px 0;
 }
+/* `display: flex` above would otherwise defeat the [hidden] attribute. */
+.toolbar .tb-log-body[hidden] { display: none; }
 .toolbar .tb-log-entry {
   display: grid;
   grid-template-columns: 60px 56px 1fr;
@@ -461,8 +495,9 @@ body {
 .sanity .corner .cross::after { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
 .sanity .corner.tl { top: 24px; left: 24px; }
 .sanity .corner.tr { top: 24px; right: 24px; }
-.sanity .corner.bl { bottom: 24px; left: 24px; }
-.sanity .corner.br { bottom: 24px; right: 24px; }
+/* Lifted above the bottom toolbar dock so the markers stay visible. */
+.sanity .corner.bl { bottom: 140px; left: 24px; }
+.sanity .corner.br { bottom: 140px; right: 24px; }
 .sanity .corner .corner-label {
   position: absolute;
   top: -16px; left: 0;
@@ -521,10 +556,11 @@ body {
 
 @media (max-width: 720px) {
   .toolbar {
-    top: 12px; left: 12px; right: 12px;
+    bottom: 12px; left: 12px; right: 12px;
     width: auto;
     max-width: calc(100vw - 24px);
   }
   .toolbar .tb-cam .preview { width: 180px; }
   .toolbar .tb-cam .preview .stage { height: 50px; }
+  .sanity .corner.bl, .sanity .corner.br { bottom: 120px; }
 }
