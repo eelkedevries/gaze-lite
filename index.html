@@ -29,12 +29,20 @@
         <span class="calib-dot" id="calib-dot"></span>
       </div>
 
-      <!-- Sanity-check corner markers -->
-      <div class="sanity" id="sanity" hidden>
-        <div class="corner tl"><span class="cross"></span><span class="corner-label">TL</span><span class="delta" id="sanity-tl">Δ —</span></div>
-        <div class="corner tr"><span class="cross"></span><span class="corner-label">TR</span><span class="delta" id="sanity-tr">Δ —</span></div>
-        <div class="corner bl"><span class="cross"></span><span class="corner-label">BL</span><span class="delta" id="sanity-bl">Δ —</span></div>
-        <div class="corner br"><span class="cross"></span><span class="corner-label">BR</span><span class="delta" id="sanity-br">Δ —</span></div>
+      <!-- Validation target (full-screen, like calibration) -->
+      <div class="validate" id="validate" hidden>
+        <span class="validate-ring" id="validate-ring"></span>
+        <span class="validate-dot" id="validate-dot"></span>
+      </div>
+
+      <!-- Validation results screen -->
+      <div class="results" id="results" hidden>
+        <div class="results-frame">
+          <h1>Validation</h1>
+          <div class="results-rows" id="results-rows"></div>
+          <div class="results-summary" id="results-summary"></div>
+          <button class="results-done" id="results-done" type="button">Done</button>
+        </div>
       </div>
 
       <!-- Idle splash -->
@@ -58,11 +66,14 @@
           <button class="tb-btn primary" id="btn-calibrate" type="button" disabled>
             <span class="ic"></span><span class="lb">Calibrate</span>
           </button>
-          <button class="tb-btn" id="btn-sanity" type="button" disabled>
-            <span class="ic"></span><span class="lb">Sanity</span>
+          <button class="tb-btn" id="btn-validate" type="button" disabled>
+            <span class="ic"></span><span class="lb">Validate</span>
           </button>
           <button class="tb-btn" id="btn-heatmap" type="button" disabled>
             <span class="ic"></span><span class="lb">Heatmap</span>
+          </button>
+          <button class="tb-btn icon-only" id="btn-dock" type="button" title="Move toolbar">
+            <span class="ic" id="ic-dock"></span>
           </button>
         </div>
 

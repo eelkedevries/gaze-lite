@@ -22,22 +22,25 @@ your estimated gaze across the screen.
 
 ## Interface
 
-A single **toolbar** floats top-left:
+A single **toolbar** floats at the bottom of the screen (a **dock toggle** at
+its right end moves it to the top and back):
 
 - **Row 1 — actions:** **Camera** (toggles to **Stop** while live), **Calibrate**,
-  **Sanity**, **Heatmap**. Calibrate/Sanity are enabled only when live; Sanity
-  also needs a completed calibration. Keyboard: `S` start, `C` calibrate,
-  `V` sanity, `H` heatmap, `Esc` stop.
+  **Validate**, **Heatmap**, and the dock toggle. Calibrate is enabled only when
+  live; **Validate** also needs a completed calibration. Keyboard: `S` start,
+  `C` calibrate, `V` validate, `H` heatmap, `Esc` stop.
 - **Row 2 — webcam preview** (mirrored) with cyan **eye-tracking boxes** (colored
   by per-eye quality), iris dots, a face reticle and a downsampled landmark
   mesh; plus **L / R** eye-quality readouts (0–100, color-coded) and **FPS**.
 - **Row 3 — log strip:** the latest timestamped entry; click to expand the full
-  session log.
+  session log (it opens away from the screen edge the toolbar is docked to, and
+  has a **Clear** button).
 
 Other surfaces: a red **gaze dot** that follows your gaze after calibration, an
 optional full-screen **heatmap**, a full-screen **calibration** mode (everything
-hides except a shrinking red target), and **sanity-check** corner markers that
-report the measured deviation (Δpx) at each screen corner.
+hides except a shrinking red target), and a **validation** pass that walks a set
+of fixation points and ends on a **results screen** listing the measured
+deviation (Δpx) at each point and the average.
 
 ## Features
 
@@ -45,7 +48,7 @@ report the measured deviation (Δpx) at each screen corner.
 - Live **face detection** with quality-colored eye boxes in the preview.
 - Full-screen **9-point calibration** and an in-browser **ridge-regression** gaze model.
 - A red gaze dot that **continuously follows** your gaze, an optional **heatmap**,
-  and a **sanity check**.
+  and a **validation** pass with a measured-deviation results screen.
 - Timestamped **session log** and live **L/R/FPS** readouts.
 - 100% client-side: **no backend, no uploads, no analytics**.
 
@@ -158,9 +161,10 @@ calibration model** built from your nine calibration samples:
 - After calibration the gaze dot tracks **continuously**: every frame the latest
   feature vector is fed through the model and the red dot is redrawn at the
   predicted point (exponentially smoothed and clamped to the viewport). Enable
-  **Heatmap** to accumulate a warm density map of where you've looked, or run a
-  **Sanity** check, which walks the four screen corners and reports the measured
-  deviation (Δpx) at each.
+  **Heatmap** to accumulate a warm density map of where you've looked, or run
+  **Validate**, which shows five fixation points, samples the predicted gaze at
+  each, and reports the measured deviation (Δpx) per point plus an average on a
+  results screen.
 
 Because the model maps to **screen coordinates**, it is tied to the current
 window/screen size; a resize or orientation change invalidates it and you must

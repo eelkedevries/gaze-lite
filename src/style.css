@@ -177,6 +177,17 @@ body {
 .toolbar .tb-btn.active { color: var(--gaze); }
 .toolbar .tb-btn.active .ic { color: var(--gaze); }
 .toolbar .tb-btn .lb { white-space: nowrap; }
+/* Compact icon-only button (the dock-position toggle). */
+.toolbar .tb-btn.icon-only { flex: 0 0 auto; padding: 10px 12px; }
+
+/* Dock the toolbar at the top instead of the bottom. */
+.toolbar.dock-top { top: 16px; bottom: auto; }
+/* When docked at the top, the log expands downward (below the rows). */
+.toolbar.dock-top .tb-log-body {
+  order: 1;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 0;
+}
 
 /* Row 2 : video + side column */
 .toolbar .tb-body {
@@ -434,17 +445,25 @@ body {
 }
 .gaze-dot.hidden { opacity: 0; }
 
-/* When calibrating, hide everything except the active red dot */
+/* When calibrating or validating, hide everything except the active target */
 .app.calibrating::before,
-.app.calibrating::after { display: none; }
+.app.calibrating::after,
+.app.validating::before,
+.app.validating::after { display: none; }
 .app.calibrating .brandmark,
 .app.calibrating .heatmap-canvas,
 .app.calibrating .gaze-dot,
-.app.calibrating .idle-overlay { display: none !important; }
+.app.calibrating .idle-overlay,
+.app.validating .brandmark,
+.app.validating .heatmap-canvas,
+.app.validating .gaze-dot,
+.app.validating .idle-overlay { display: none !important; }
 /* Keep the toolbar (and its <video>) in the render tree so MediaPipe keeps
-   receiving frames during calibration — just make it invisible. */
-.app.calibrating .toolbar { opacity: 0 !important; pointer-events: none !important; }
-.app.calibrating { background: var(--bg-0); }
+   receiving frames during the full-screen modes — just make it invisible. */
+.app.calibrating .toolbar,
+.app.validating .toolbar { opacity: 0 !important; pointer-events: none !important; }
+.app.calibrating,
+.app.validating { background: var(--bg-0); }
 
 /* Calibration: single solid red dot that shrinks to nothing */
 .calib {
@@ -467,51 +486,97 @@ body {
   will-change: transform;
 }
 
-/* Sanity-check corner markers */
-.sanity {
+/* Validation target — a cyan fixation ring + dot at each point */
+.validate {
   position: fixed; inset: 0; z-index: 14; pointer-events: none;
 }
-.sanity .corner {
+.validate-dot {
   position: absolute;
-  width: 56px; height: 56px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--track);
+  box-shadow: 0 0 0 2px oklch(0 0 0 / .35), 0 0 18px var(--track-soft);
+  transform: translate(-50%, -50%);
+}
+.validate-ring {
+  position: absolute;
+  width: 52px; height: 52px;
+  border-radius: 50%;
   border: 1px solid var(--track);
-  color: var(--track);
-  font-size: 9px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  transform: translate(-50%, -50%);
+  transition: transform .1s linear;
+  opacity: 0.6;
+}
+
+/* Validation results screen */
+.results {
+  position: fixed; inset: 0;
+  z-index: 16;
   display: grid; place-items: center;
 }
-.sanity .corner .cross {
-  position: absolute;
-  width: 20px; height: 20px;
+.results[hidden] { display: none; }
+.results-frame {
+  pointer-events: auto;
+  min-width: 300px;
+  max-width: 440px;
+  padding: 22px 26px 20px;
+  background: oklch(0.16 0.006 240 / .96);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 18px 40px -22px oklch(0 0 0 / .85);
 }
-.sanity .corner .cross::before,
-.sanity .corner .cross::after {
-  content: '';
-  position: absolute;
-  background: var(--track);
+.results-frame h1 {
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--fg-0);
 }
-.sanity .corner .cross::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
-.sanity .corner .cross::after { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
-.sanity .corner.tl { top: 24px; left: 24px; }
-.sanity .corner.tr { top: 24px; right: 24px; }
-/* Lifted above the bottom toolbar dock so the markers stay visible. */
-.sanity .corner.bl { bottom: 140px; left: 24px; }
-.sanity .corner.br { bottom: 140px; right: 24px; }
-.sanity .corner .corner-label {
-  position: absolute;
-  top: -16px; left: 0;
-  font-size: 9px;
-  letter-spacing: 0.18em;
+.results-rows { display: flex; flex-direction: column; margin-bottom: 12px; }
+.results-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  font-size: 11px;
 }
-.sanity .corner .delta {
-  position: absolute;
-  bottom: -22px;
-  font-size: 9.5px;
+.results-row:last-child { border-bottom: 0; }
+.results-row .lbl {
   color: var(--fg-2);
-  white-space: nowrap;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
-.sanity .corner.active { box-shadow: 0 0 0 1px var(--track), 0 0 14px var(--track-soft); }
+.results-row .dev { color: var(--fg-0); font-variant-numeric: tabular-nums; }
+.results-summary {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--fg-1);
+  margin-bottom: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.results-summary.good { color: var(--good); }
+.results-summary.warn { color: var(--warn); }
+.results-summary.err { color: var(--gaze); }
+.results-done {
+  appearance: none;
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--fg-0);
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 9px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.results-done:hover { background: oklch(1 0 0 / .04); border-color: var(--fg-3); }
 
 /* ============================================================== */
 /* IDLE / EMPTY OVERLAY                                            */
@@ -560,7 +625,7 @@ body {
     width: auto;
     max-width: calc(100vw - 24px);
   }
+  .toolbar.dock-top { top: 12px; bottom: auto; }
   .toolbar .tb-cam .preview { width: 180px; }
   .toolbar .tb-cam .preview .stage { height: 50px; }
-  .sanity .corner.bl, .sanity .corner.br { bottom: 120px; }
 }
