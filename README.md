@@ -1,17 +1,18 @@
 # gaze-lite
 
-A browser-only webcam / smartphone-camera **gaze demo**. It runs entirely as a
-static site (GitHub Pages), with no backend and no paid APIs. The goal is a
-small app that shows an eye/video preview, draws green boxes around both eyes,
-runs a short calibration, and prints a red gaze dot on demand.
+A browser-only webcam / smartphone-camera **gaze demo** with a dark
+"lab-instrument" UI. It runs entirely as a static site (GitHub Pages), with no
+backend and no paid APIs: a single top-left toolbar holds the controls, an
+in-toolbar webcam preview shows cyan eye-tracking boxes, and a red dot follows
+your estimated gaze across the screen.
 
-> **Status:** the full v1 flow is implemented — camera start/stop, **MediaPipe
-> face detection**, **both-eye tracking boxes**, a **9-point calibration
-> sweep**, a **calibrated gaze model**, and **`Print gaze`**, which toggles a
-> red dot that **continuously follows** your estimated gaze. Calibration is
-> invalidated on a viewport resize / orientation change (recalibrate when
-> prompted). Estimates are **approximate** — this is a demo, not a
-> validated/scientific eye tracker.
+> **Status:** the full flow is implemented — camera start/stop, **MediaPipe
+> face detection** with cyan eye boxes, **L/R quality + FPS readouts**, a
+> session **log**, a full-screen **9-point calibration**, a **calibrated gaze
+> model** driving a red dot that **continuously follows** your gaze, an optional
+> **heatmap**, and a 4-corner **sanity check**. Calibration is invalidated on a
+> viewport resize / orientation change (recalibrate when prompted). Estimates
+> are **approximate** — this is a demo, not a validated/scientific eye tracker.
 
 ## Live demo
 
@@ -19,15 +20,33 @@ runs a short calibration, and prints a red gaze dot on demand.
 
 (Served over HTTPS, which is required for camera access.)
 
+## Interface
+
+A single **toolbar** floats top-left:
+
+- **Row 1 — actions:** **Camera** (toggles to **Stop** while live), **Calibrate**,
+  **Sanity**, **Heatmap**. Calibrate/Sanity are enabled only when live; Sanity
+  also needs a completed calibration. Keyboard: `S` start, `C` calibrate,
+  `V` sanity, `H` heatmap, `Esc` stop.
+- **Row 2 — webcam preview** (mirrored) with cyan **eye-tracking boxes** (colored
+  by per-eye quality), iris dots, a face reticle and a downsampled landmark
+  mesh; plus **L / R** eye-quality readouts (0–100, color-coded) and **FPS**.
+- **Row 3 — log strip:** the latest timestamped entry; click to expand the full
+  session log.
+
+Other surfaces: a red **gaze dot** that follows your gaze after calibration, an
+optional full-screen **heatmap**, a full-screen **calibration** mode (everything
+hides except a shrinking red target), and **sanity-check** corner markers that
+report the measured deviation (Δpx) at each screen corner.
+
 ## Features
 
 - **Start / Stop camera** with the front-facing camera preferred on mobile.
-- Live **face detection** and **green boxes around both eyes** while tracked.
-- **9-point calibration** sweep with on-screen targets and progress.
-- A small **calibrated gaze model** (ridge regression) fitted in the browser.
-- **Print gaze** — a red dot that **continuously follows** your estimated gaze,
-  plus **Clear dot**.
-- Clear status messages for every state and failure mode.
+- Live **face detection** with quality-colored eye boxes in the preview.
+- Full-screen **9-point calibration** and an in-browser **ridge-regression** gaze model.
+- A red gaze dot that **continuously follows** your gaze, an optional **heatmap**,
+  and a **sanity check**.
+- Timestamped **session log** and live **L/R/FPS** readouts.
 - 100% client-side: **no backend, no uploads, no analytics**.
 
 ## Stack
@@ -102,18 +121,17 @@ If the model or WASM cannot be loaded, the app surfaces a clear
 
 ## Calibration
 
-Clicking **Run calibration** runs a **9-point sweep** (corners, edge midpoints,
-and centre). For each target the app shows a high-contrast dot, waits briefly
-for your gaze to settle, then averages the eye-feature vectors collected over a
-short window — accepting only frames where **both eyes are tracked**. The nine
-averaged samples (each paired with its on-screen target) are stored in memory.
-A point with too few good samples is retried once; if it still fails, the run
-stops with a clear status. **Stop camera** (or starting a new run) cancels an
-in-progress calibration.
+Clicking **Calibrate** clears the screen to black and runs a **9-point sweep**
+(corners, edge midpoints, and centre). Each target is a solid red dot that
+**shrinks to nothing** over its dwell; the app averages the eye-feature vectors
+collected during that window — accepting only frames where **both eyes are
+tracked** — and stores each averaged sample with its on-screen target. A point
+with too few good samples is retried once; if it still fails, the run stops with
+a clear status. **Stop** cancels an in-progress calibration.
 
-When the sweep finishes, the app fits the gaze model from the nine samples,
-enables **Print gaze**, and reports `Calibrated — ready to print gaze`. If the
-model cannot be fitted, `Print gaze` stays disabled and a clear error is shown.
+When the sweep finishes, the app fits the gaze model from the nine samples and
+returns to the live screen, where the red gaze dot begins following your gaze.
+If the model cannot be fitted, a clear error is logged instead.
 
 For a good calibration:
 
@@ -137,12 +155,12 @@ calibration model** built from your nine calibration samples:
   screen y) with standardized features (with a floored divisor) and an
   unpenalized intercept. The ridge penalty plus the std floor keep coefficients
   bounded so predictions don't extrapolate off-screen (`src/gazeModel.ts`).
-- **Print gaze** toggles **continuous** gaze tracking: while on, every frame the
-  latest feature vector is fed through the model and the red dot is redrawn at
-  the predicted point (exponentially smoothed and clamped to the viewport), so
-  the dot follows your gaze in real time. Click it again to stop (the last dot
-  stays put); **Clear dot** removes it. If both eyes drop out, the dot holds its
-  last position.
+- After calibration the gaze dot tracks **continuously**: every frame the latest
+  feature vector is fed through the model and the red dot is redrawn at the
+  predicted point (exponentially smoothed and clamped to the viewport). Enable
+  **Heatmap** to accumulate a warm density map of where you've looked, or run a
+  **Sanity** check, which walks the four screen corners and reports the measured
+  deviation (Δpx) at each.
 
 Because the model maps to **screen coordinates**, it is tied to the current
 window/screen size; a resize or orientation change invalidates it and you must
@@ -187,9 +205,12 @@ particular:
 
 ## Troubleshooting
 
-- **Clicking *Start camera* does nothing / no permission prompt.** The page
-  must be a *secure context*. Use `http://localhost` in dev or the HTTPS live
-  demo — a plain-HTTP LAN IP (e.g. `http://192.168.x.x`) blocks the camera.
+- **Clicking *Camera* does nothing / no permission prompt.** The page must be a
+  *secure context*. Use `http://localhost` in dev or the HTTPS live demo — a
+  plain-HTTP LAN IP (e.g. `http://192.168.x.x`) blocks the camera.
+- **The font looks like a system font.** JetBrains Mono is loaded from Google
+  Fonts; if that request is blocked the UI falls back to a monospace system
+  font (purely cosmetic).
 - **"Camera permission denied".** Allow camera access for the site in the
   browser's address-bar / site settings, then reload and retry.
 - **"The camera is already in use".** Another tab or app holds the camera.

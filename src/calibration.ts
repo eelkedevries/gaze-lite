@@ -40,8 +40,8 @@ const MIN_SAMPLES = 8;
  * from the extreme edges so they stay visible and touch-friendly on mobile.
  */
 export function createNinePointCalibrationLayout(
-  xs: readonly [number, number, number] = [0.15, 0.5, 0.85],
-  ys: readonly [number, number, number] = [0.18, 0.5, 0.82],
+  xs: readonly [number, number, number] = [0.12, 0.5, 0.88],
+  ys: readonly [number, number, number] = [0.14, 0.5, 0.86],
 ): CalibrationPoint[] {
   const points: CalibrationPoint[] = [];
   for (const y of ys) {

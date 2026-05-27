@@ -1,128 +1,530 @@
 :root {
-  color-scheme: light dark;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  line-height: 1.5;
-  --accent: #2563eb;
-  /* Keep mobile browsers from auto-inflating text on rotation. */
+  /* Surfaces */
+  --bg-0: oklch(0.14 0.005 240);
+  --bg-1: oklch(0.18 0.006 240);
+  --bg-2: oklch(0.22 0.007 240);
+  --bg-3: oklch(0.27 0.008 240);
+  --line: oklch(0.32 0.01 240);
+  --line-soft: oklch(0.26 0.008 240);
+
+  /* Text */
+  --fg-0: oklch(0.97 0.004 240);
+  --fg-1: oklch(0.82 0.005 240);
+  --fg-2: oklch(0.62 0.006 240);
+  --fg-3: oklch(0.46 0.008 240);
+
+  /* Accents */
+  --gaze: oklch(0.66 0.21 25);
+  --gaze-soft: oklch(0.66 0.21 25 / .18);
+  --track: oklch(0.82 0.13 200);
+  --track-soft: oklch(0.82 0.13 200 / .18);
+  --warn: oklch(0.82 0.16 90);
+  --good: oklch(0.78 0.15 150);
+
+  --radius: 6px;
+  --radius-sm: 4px;
+
+  color-scheme: dark;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-feature-settings: 'ss01', 'ss02', 'zero', 'cv11';
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
-html,
-body {
+html, body {
   margin: 0;
   min-height: 100%;
+  background: var(--bg-0);
+  color: var(--fg-1);
 }
 
 body {
-  /* Prevent the full-viewport canvas / layout from causing sideways scroll. */
-  overflow-x: hidden;
+  overflow: hidden;
+  background-image:
+    radial-gradient(1100px 700px at 50% 115%, oklch(0.2 0.012 240) 0%, transparent 55%),
+    radial-gradient(900px 600px at 0% 0%, oklch(0.18 0.01 240) 0%, transparent 60%);
 }
 
-/* Full-viewport overlay for calibration targets and the red gaze dot.
-   pointer-events:none so it never intercepts taps meant for the buttons. */
-.gaze-canvas {
+/* ============================================================== */
+/* APP SHELL                                                       */
+/* ============================================================== */
+
+.app {
   position: fixed;
   inset: 0;
-  /* 100% of the fixed viewport — avoids the horizontal scrollbar that 100vw
-     can introduce and the mobile-URL-bar mismatch of 100vh. */
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 1000;
-}
-
-.page {
-  position: relative;
-  z-index: 1;
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
-}
-
-.title {
-  margin: 0;
-  font-size: 1.75rem;
-}
-
-.subtitle {
-  margin: 0.25rem 0 1.25rem;
-  opacity: 0.8;
-}
-
-/* Small but visible preview; the overlay canvas is layered exactly on top. */
-.preview {
-  position: relative;
-  width: 100%;
-  max-width: 320px;
-  aspect-ratio: 4 / 3;
-  margin-bottom: 1.25rem;
-  background: #0003;
-  border: 1px solid #8884;
-  border-radius: 8px;
   overflow: hidden;
 }
 
-.preview__video,
-.preview__overlay {
+/* Faint engineering grid covering the whole canvas area */
+.app::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, oklch(1 0 0 / .02) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(1 0 0 / .02) 1px, transparent 1px);
+  background-size: 56px 56px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Subtle vignette */
+.app::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 90% at 50% 50%, transparent 55%, oklch(0 0 0 / .55) 100%);
+  z-index: 1;
+}
+
+/* Corner brand bug */
+.brandmark {
+  position: fixed;
+  top: 16px;
+  left: 18px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-2);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  user-select: none;
+  /* The toolbar sits at the same corner; keep the brand bug out of the way. */
+  display: none;
+}
+.brandmark .dot {
+  width: 6px;
+  height: 6px;
+  background: var(--gaze);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--gaze);
+}
+
+/* ============================================================== */
+/* UNIFIED TOOLBAR (top-left)                                      */
+/* ============================================================== */
+
+.toolbar {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  background: oklch(0.16 0.006 240 / .94);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 40px -22px oklch(0 0 0 / .85);
+  overflow: hidden;
+}
+
+/* Row 1 : action buttons */
+.toolbar .tb-buttons {
+  display: flex;
+  border-bottom: 1px solid var(--line-soft);
+}
+.toolbar .tb-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--fg-1);
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 10px 10px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-left: 1px solid var(--line-soft);
+  transition: background .15s, color .15s;
+}
+.toolbar .tb-btn:first-child { border-left: 0; }
+.toolbar .tb-btn:hover:not(:disabled) {
+  background: oklch(1 0 0 / .04);
+  color: var(--fg-0);
+}
+.toolbar .tb-btn:disabled,
+.toolbar .tb-btn.disabled {
+  color: var(--fg-3);
+  cursor: not-allowed;
+}
+.toolbar .tb-btn .ic {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-1);
+}
+.toolbar .tb-btn:disabled .ic { color: var(--fg-3); }
+.toolbar .tb-btn.primary { color: var(--fg-0); }
+.toolbar .tb-btn.primary .ic { color: var(--fg-0); }
+.toolbar .tb-btn.danger { color: var(--gaze); }
+.toolbar .tb-btn.danger .ic { color: var(--gaze); }
+.toolbar .tb-btn.active { color: var(--gaze); }
+.toolbar .tb-btn.active .ic { color: var(--gaze); }
+.toolbar .tb-btn .lb { white-space: nowrap; }
+
+/* Row 2 : video + side column */
+.toolbar .tb-body {
+  display: flex;
+  align-items: stretch;
+}
+
+.toolbar .tb-cam {
+  display: flex;
+  border-right: 1px solid var(--line-soft);
+}
+.toolbar .tb-cam .preview {
+  position: static;
+  width: 264px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+.toolbar .tb-cam .preview .stage {
+  aspect-ratio: auto;
+  height: 66px;
+  width: 100%;
+}
+
+/* Side column: readouts row above, log row below */
+.toolbar .tb-side {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar .tb-readouts {
+  display: flex;
+  gap: 0;
+  flex: 1;
+  border-bottom: 1px solid var(--line-soft);
+}
+.toolbar .tb-readout {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  flex: 1;
+  gap: 2px;
+  padding: 4px 6px;
+  border-left: 1px solid var(--line-soft);
+}
+.toolbar .tb-readout:first-child { border-left: 0; }
+.toolbar .tb-readout .k {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.toolbar .tb-readout .v {
+  font-size: 14px;
+  color: var(--fg-0);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.toolbar .tb-readout.good .v { color: var(--good); }
+.toolbar .tb-readout.warn .v { color: var(--warn); }
+.toolbar .tb-readout.err  .v { color: var(--gaze); }
+
+/* Log strip (collapsed) */
+.toolbar .tb-log {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: var(--fg-1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s;
+}
+.toolbar .tb-log:hover { background: oklch(1 0 0 / .04); }
+.toolbar .tb-log-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--track);
+}
+.toolbar .tb-log-dot.ok   { background: var(--good); }
+.toolbar .tb-log-dot.warn { background: var(--warn); }
+.toolbar .tb-log-dot.err  { background: var(--gaze); box-shadow: 0 0 6px var(--gaze); }
+.toolbar .tb-log-msg {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toolbar .tb-log-ts {
+  font-size: 9.5px;
+  color: var(--fg-3);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.toolbar .tb-log-caret {
+  font-size: 9px;
+  color: var(--fg-3);
+  flex-shrink: 0;
+}
+
+/* Expanded log body */
+.toolbar .tb-log-body {
+  border-top: 1px solid var(--line-soft);
+  max-height: 220px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column-reverse;
+  padding: 4px 0;
+}
+.toolbar .tb-log-entry {
+  display: grid;
+  grid-template-columns: 60px 56px 1fr;
+  gap: 10px;
+  padding: 3px 12px;
+  font-size: 10.5px;
+  color: var(--fg-1);
+  border-bottom: 1px dashed var(--line-soft);
+}
+.toolbar .tb-log-entry:last-child { border-bottom: none; }
+.toolbar .tb-log-entry .ts { color: var(--fg-3); font-size: 9.5px; }
+.toolbar .tb-log-entry .sev {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.toolbar .tb-log-entry .sev.ok   { color: var(--good); }
+.toolbar .tb-log-entry .sev.warn { color: var(--warn); }
+.toolbar .tb-log-entry .sev.err  { color: var(--gaze); }
+
+/* ============================================================== */
+/* CAMERA PREVIEW (inside the toolbar)                             */
+/* ============================================================== */
+
+.preview { overflow: hidden; }
+.preview .stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background:
+    radial-gradient(60% 80% at 50% 55%, oklch(0.32 0.02 30) 0%, oklch(0.22 0.015 30) 38%, oklch(0.14 0.01 30) 78%);
+  overflow: hidden;
+}
+.preview .stage.mirrored { transform: scaleX(-1); }
+.preview .stage video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.preview .stage .preview-overlay {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
 }
-
-.preview__video {
-  object-fit: cover;
-  /* Mirror the preview so it feels like a selfie view. Any coordinate
-     conversions that depend on this mirroring are handled downstream. */
-  transform: scaleX(-1);
+.preview .cam-tag {
+  position: absolute;
+  top: 8px; left: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-1);
+  background: oklch(0 0 0 / .55);
+  border-radius: 3px;
+}
+.preview .stage.mirrored .cam-tag { transform: scaleX(-1); }
+.preview .cam-tag .ledline {
+  display: inline-block;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--track);
+  box-shadow: 0 0 6px var(--track);
 }
 
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+/* ============================================================== */
+/* GAZE / HEATMAP                                                  */
+/* ============================================================== */
+
+.heatmap-canvas {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 4;
+  mix-blend-mode: screen;
+  opacity: 0.85;
 }
 
-button {
-  flex: 1 1 auto;
-  min-width: 8rem;
-  min-height: 44px; /* touch target */
-  padding: 0.625rem 1rem;
-  font: inherit;
-  font-size: 1rem; /* >=16px avoids iOS zoom-on-focus */
-  border: 1px solid #8886;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  cursor: pointer;
-  touch-action: manipulation; /* remove the 300ms tap delay on mobile */
+.gaze-dot {
+  position: fixed;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--gaze);
+  box-shadow:
+    0 0 0 2px oklch(0 0 0 / .35),
+    0 0 14px var(--gaze),
+    0 0 38px var(--gaze-soft);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 12;
+  transition: opacity .25s;
+  will-change: left, top;
+}
+.gaze-dot.hidden { opacity: 0; }
+
+/* When calibrating, hide everything except the active red dot */
+.app.calibrating::before,
+.app.calibrating::after { display: none; }
+.app.calibrating .brandmark,
+.app.calibrating .heatmap-canvas,
+.app.calibrating .gaze-dot,
+.app.calibrating .idle-overlay { display: none !important; }
+/* Keep the toolbar (and its <video>) in the render tree so MediaPipe keeps
+   receiving frames during calibration — just make it invisible. */
+.app.calibrating .toolbar { opacity: 0 !important; pointer-events: none !important; }
+.app.calibrating { background: var(--bg-0); }
+
+/* Calibration: single solid red dot that shrinks to nothing */
+.calib {
+  position: fixed;
+  inset: 0;
+  z-index: 14;
+  pointer-events: none;
+}
+.calib-dot {
+  position: absolute;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--gaze);
+  box-shadow:
+    0 0 0 2px oklch(0 0 0 / .35),
+    0 0 30px var(--gaze-soft);
+  transform-origin: center;
+  transition: transform .08s linear;
+  will-change: transform;
 }
 
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
+/* Sanity-check corner markers */
+.sanity {
+  position: fixed; inset: 0; z-index: 14; pointer-events: none;
 }
-
-.status {
-  min-height: 1.5em;
-  margin: 0 0 1rem;
-  font-variant-numeric: tabular-nums;
+.sanity .corner {
+  position: absolute;
+  width: 56px; height: 56px;
+  border: 1px solid var(--track);
+  color: var(--track);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  display: grid; place-items: center;
 }
+.sanity .corner .cross {
+  position: absolute;
+  width: 20px; height: 20px;
+}
+.sanity .corner .cross::before,
+.sanity .corner .cross::after {
+  content: '';
+  position: absolute;
+  background: var(--track);
+}
+.sanity .corner .cross::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
+.sanity .corner .cross::after { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
+.sanity .corner.tl { top: 24px; left: 24px; }
+.sanity .corner.tr { top: 24px; right: 24px; }
+.sanity .corner.bl { bottom: 24px; left: 24px; }
+.sanity .corner.br { bottom: 24px; right: 24px; }
+.sanity .corner .corner-label {
+  position: absolute;
+  top: -16px; left: 0;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+.sanity .corner .delta {
+  position: absolute;
+  bottom: -22px;
+  font-size: 9.5px;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+.sanity .corner.active { box-shadow: 0 0 0 1px var(--track), 0 0 14px var(--track-soft); }
 
-.privacy {
+/* ============================================================== */
+/* IDLE / EMPTY OVERLAY                                            */
+/* ============================================================== */
+
+.idle-overlay {
+  position: fixed; inset: 0;
+  z-index: 8;
+  display: grid; place-items: center;
+  pointer-events: none;
+  color: var(--fg-2);
+}
+.idle-overlay.hidden { display: none; }
+.idle-overlay .frame {
+  text-align: center;
+  pointer-events: auto;
+  padding: 28px 36px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: oklch(0.16 0.006 240 / .6);
+  backdrop-filter: blur(8px);
+  max-width: 400px;
+}
+.idle-overlay h1 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-0);
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+}
+.idle-overlay p {
   margin: 0;
-  font-size: 0.875rem;
-  opacity: 0.75;
+  font-size: 11.5px;
+  color: var(--fg-2);
+  line-height: 1.6;
 }
 
-@media (max-width: 420px) {
-  .controls button {
-    flex-basis: 100%;
+/* ============================================================== */
+/* RESPONSIVE                                                      */
+/* ============================================================== */
+
+@media (max-width: 720px) {
+  .toolbar {
+    top: 12px; left: 12px; right: 12px;
+    width: auto;
+    max-width: calc(100vw - 24px);
   }
+  .toolbar .tb-cam .preview { width: 180px; }
+  .toolbar .tb-cam .preview .stage { height: 50px; }
 }

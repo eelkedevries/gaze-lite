@@ -17,6 +17,11 @@ const LEFT_EYE_OUTER = 263;
 const RIGHT_IRIS_CENTER = 468;
 const LEFT_IRIS_CENTER = 473;
 
+// Lid/corner indices for an eye-aspect-ratio (openness) measure, per eye:
+// [outer corner, inner corner, top lid, bottom lid].
+const RIGHT_EYE_EAR = [33, 133, 159, 145] as const;
+const LEFT_EYE_EAR = [263, 362, 386, 374] as const;
+
 const MIN_CONTOUR_LANDMARKS = 468; // highest contour index used is 466
 const IRIS_LANDMARKS = 478;
 
@@ -43,6 +48,18 @@ function boxFromIndices(landmarks: NormalisedPoint[], indices: number[]): EyeBox
 
 function center(box: EyeBox): Point {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+// Eye openness as a [0,1] quality: vertical lid gap over eye width (an
+// eye-aspect-ratio), mapped so a normally-open eye reads high and a blink low.
+function eyeQuality(landmarks: NormalisedPoint[], idx: readonly number[]): number {
+  const outer = landmarks[idx[0]];
+  const inner = landmarks[idx[1]];
+  const top = landmarks[idx[2]];
+  const bottom = landmarks[idx[3]];
+  const width = Math.hypot(outer.x - inner.x, outer.y - inner.y) || 1e-4;
+  const ear = Math.hypot(top.x - bottom.x, top.y - bottom.y) / width;
+  return Math.max(0, Math.min(1, (ear - 0.1) / 0.2));
 }
 
 // Where a point sits inside the eye box, in [0,1] per axis. ~0.5 looking
@@ -122,5 +139,7 @@ export function extractEyeFeatures(result: FaceTrackingResult): EyeFeatures | nu
     faceScale,
     featureVector,
     confidence,
+    leftQuality: eyeQuality(lm, LEFT_EYE_EAR),
+    rightQuality: eyeQuality(lm, RIGHT_EYE_EAR),
   };
 }

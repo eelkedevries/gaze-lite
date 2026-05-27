@@ -1,26 +1,27 @@
-// Canvas drawing for the camera-preview overlay: green eye-tracking boxes.
-// The red gaze dot and calibration targets are drawn in later steps.
+// Canvas drawing for the redesigned UI:
+//   - the small in-toolbar camera preview overlay (cyan eye boxes with corner
+//     ticks, iris dots, face reticle, optional landmark mesh)
+//   - the full-viewport gaze heatmap
+// The live gaze dot and calibration target are plain DOM elements (see main.ts),
+// not canvas-drawn.
 
-import type { EyeBox, EyeFeatures, Point } from './types';
+import type { EyeBox, EyeFeatures, NormalisedPoint } from './types';
 
-const EYE_BOX_COLOR = '#22c55e';
-
-/** How to map normalized video coordinates onto the overlay canvas. */
-export interface PreviewTransform {
-  /** Intrinsic video-frame size (video.videoWidth / videoHeight). */
-  videoWidth: number;
-  videoHeight: number;
-  /** Mirror x to match the CSS `scaleX(-1)` selfie preview (see style.css). */
-  mirror: boolean;
-}
+// Design tokens (mirrors of the CSS custom properties) for canvas use.
+const TRACK = 'oklch(0.82 0.13 200)';
+const WARN = 'oklch(0.82 0.16 90)';
+const GAZE = 'oklch(0.66 0.21 25)';
+const MESH = 'oklch(0.92 0.04 200 / 0.55)';
+const RETICLE = 'oklch(1 0 0 / 0.06)';
 
 /** Resize a canvas's backing store to a CSS size, scaled for high-DPI screens. */
 export function resizeCanvasToDisplaySize(
   canvas: HTMLCanvasElement,
   cssWidth: number,
   cssHeight: number,
+  maxDpr = Infinity,
 ): void {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
   const w = Math.max(1, Math.round(cssWidth * dpr));
   const h = Math.max(1, Math.round(cssHeight * dpr));
   if (canvas.width !== w || canvas.height !== h) {
@@ -29,131 +30,139 @@ export function resizeCanvasToDisplaySize(
   }
 }
 
-export function clearPreviewOverlay(ctx: CanvasRenderingContext2D): void {
+export function clearCanvas(ctx: CanvasRenderingContext2D): void {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 }
 
-export function clearGazeCanvas(ctx: CanvasRenderingContext2D): void {
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+function qualityColor(q: number): string {
+  return q > 0.6 ? TRACK : q > 0.3 ? WARN : GAZE;
 }
 
 /**
- * Draws the red gaze dot at `point` (normalized [0,1] of the full-viewport gaze
- * canvas). The canvas backing store is sized to the viewport, so callers just
- * pass normalized coordinates and resize handling is automatic.
+ * Draws the preview overlay in the toolbar. Coordinates in `features` /
+ * `landmarks` are normalized to the video frame and mapped through the same
+ * `object-fit: cover` crop the <video> uses. The preview's CSS stage applies
+ * the horizontal mirror, so nothing is mirrored here.
  */
-export function drawGazeDot(ctx: CanvasRenderingContext2D, point: Point): void {
-  const cw = ctx.canvas.width;
-  const ch = ctx.canvas.height;
-  const dpr = window.devicePixelRatio || 1;
-  const r = Math.max(8, 10 * dpr);
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(point.x * cw, point.y * ch, r, 0, Math.PI * 2);
-  ctx.fillStyle = '#ef4444';
-  ctx.fill();
-  ctx.lineWidth = Math.max(2, 2 * dpr);
-  ctx.strokeStyle = '#fff';
-  ctx.stroke();
-  ctx.restore();
-}
-
-/**
- * Draws a high-contrast calibration target at `point` (normalized [0,1] of the
- * full-viewport gaze canvas): a white disc with a dark outline and a red centre
- * dot, so it reads clearly on light or dark backgrounds. `label` (e.g.
- * "Calibration 3 / 9") is drawn beneath it when provided.
- */
-export function drawCalibrationTarget(
-  ctx: CanvasRenderingContext2D,
-  point: Point,
-  label?: string,
-): void {
-  const cw = ctx.canvas.width;
-  const ch = ctx.canvas.height;
-  const dpr = window.devicePixelRatio || 1;
-  const x = point.x * cw;
-  const y = point.y * ch;
-  const r = Math.max(16, 20 * dpr);
-
-  ctx.save();
-  ctx.fillStyle = '#fff';
-  ctx.strokeStyle = '#111';
-  ctx.lineWidth = Math.max(2, 3 * dpr);
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = '#dc2626';
-  ctx.beginPath();
-  ctx.arc(x, y, Math.max(4, 5 * dpr), 0, Math.PI * 2);
-  ctx.fill();
-
-  if (label) {
-    ctx.font = `${Math.max(14, 15 * dpr)}px system-ui, -apple-system, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    const ty = y + r + Math.max(6, 8 * dpr);
-    ctx.lineWidth = Math.max(2, 3 * dpr);
-    ctx.strokeStyle = '#111';
-    ctx.strokeText(label, x, ty);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, x, ty);
-  }
-  ctx.restore();
-}
-
-/**
- * Draws green boxes around both eyes. Coordinates in `features` are normalized
- * to the video frame; this maps them through the same `object-fit: cover` crop
- * and horizontal mirror that the CSS applies to the <video>, so the boxes line
- * up with the visible preview.
- */
-export function drawEyeBoxes(
+export function drawPreview(
   ctx: CanvasRenderingContext2D,
   features: EyeFeatures,
-  transform: PreviewTransform,
+  landmarks: NormalisedPoint[],
+  videoWidth: number,
+  videoHeight: number,
+  showMesh: boolean,
 ): void {
   const cw = ctx.canvas.width;
   const ch = ctx.canvas.height;
-  const { videoWidth, videoHeight, mirror } = transform;
   if (cw === 0 || ch === 0 || videoWidth === 0 || videoHeight === 0) return;
+  const dpr = window.devicePixelRatio || 1;
 
-  // object-fit: cover — scale the frame to fill the box, cropping the overflow.
+  // object-fit: cover mapping.
   const scale = Math.max(cw / videoWidth, ch / videoHeight);
   const dispW = videoWidth * scale;
   const dispH = videoHeight * scale;
   const offX = (cw - dispW) / 2;
   const offY = (ch - dispH) / 2;
-
-  // Mirroring is applied here, and only here, in the drawing layer.
-  const mapX = (nx: number): number => {
-    const x = offX + nx * dispW;
-    return mirror ? cw - x : x;
-  };
+  const mapX = (nx: number): number => offX + nx * dispW;
   const mapY = (ny: number): number => offY + ny * dispH;
 
-  const toRect = (box: EyeBox) => {
-    const x1 = mapX(box.x);
-    const x2 = mapX(box.x + box.width);
-    const y1 = mapY(box.y);
-    const y2 = mapY(box.y + box.height);
-    return {
-      left: Math.min(x1, x2),
-      top: Math.min(y1, y2),
-      width: Math.abs(x2 - x1),
-      height: Math.abs(y2 - y1),
-    };
-  };
-
+  // Face reticle through the centroid.
   ctx.save();
-  ctx.strokeStyle = EYE_BOX_COLOR;
-  ctx.lineWidth = Math.max(2, Math.round(cw * 0.008));
-  ctx.lineJoin = 'round';
-  for (const box of [features.leftEyeBox, features.rightEyeBox]) {
-    const r = toRect(box);
-    ctx.strokeRect(r.left, r.top, r.width, r.height);
+  ctx.strokeStyle = RETICLE;
+  ctx.lineWidth = Math.max(1, 0.5 * dpr);
+  const fcx = mapX(features.faceCenter.x);
+  const fcy = mapY(features.faceCenter.y);
+  ctx.beginPath();
+  ctx.moveTo(fcx, 0);
+  ctx.lineTo(fcx, ch);
+  ctx.moveTo(0, fcy);
+  ctx.lineTo(cw, fcy);
+  ctx.stroke();
+
+  // Landmark mesh (downsampled — the full mesh is far too dense at this size).
+  if (showMesh) {
+    ctx.fillStyle = MESH;
+    const r = Math.max(0.6, 0.7 * dpr);
+    for (let i = 0; i < landmarks.length; i += 5) {
+      const p = landmarks[i];
+      ctx.beginPath();
+      ctx.arc(mapX(p.x), mapY(p.y), r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  drawEyeBox(ctx, features.leftEyeBox, qualityColor(features.leftQuality), mapX, mapY, dpr);
+  drawEyeBox(ctx, features.rightEyeBox, qualityColor(features.rightQuality), mapX, mapY, dpr);
+
+  // Iris dots.
+  const irisR = Math.max(1.2, 1.6 * dpr);
+  for (const c of [features.leftIrisLikeCenter, features.rightIrisLikeCenter]) {
+    if (!c) continue;
+    ctx.fillStyle = TRACK;
+    ctx.beginPath();
+    ctx.arc(mapX(c.x), mapY(c.y), irisR, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.restore();
+}
+
+function drawEyeBox(
+  ctx: CanvasRenderingContext2D,
+  box: EyeBox,
+  color: string,
+  mapX: (n: number) => number,
+  mapY: (n: number) => number,
+  dpr: number,
+): void {
+  const x1 = mapX(box.x);
+  const x2 = mapX(box.x + box.width);
+  const y1 = mapY(box.y);
+  const y2 = mapY(box.y + box.height);
+  const left = Math.min(x1, x2);
+  const top = Math.min(y1, y2);
+  const w = Math.abs(x2 - x1);
+  const h = Math.abs(y2 - y1);
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, 1 * dpr);
+  ctx.strokeRect(left, top, w, h);
+
+  // Corner ticks.
+  const t = Math.max(2.5, 3.5 * dpr);
+  ctx.lineWidth = Math.max(1, 1.4 * dpr);
+  for (const [cx, cy] of [
+    [left, top],
+    [left + w, top],
+    [left, top + h],
+    [left + w, top + h],
+  ]) {
+    ctx.beginPath();
+    ctx.moveTo(cx - t, cy);
+    ctx.lineTo(cx + t, cy);
+    ctx.moveTo(cx, cy - t);
+    ctx.lineTo(cx, cy + t);
+    ctx.stroke();
+  }
+}
+
+/** Draws the gaze heatmap. Samples are in CSS viewport pixels. */
+export function drawHeatmap(
+  ctx: CanvasRenderingContext2D,
+  samples: ReadonlyArray<{ x: number; y: number }>,
+  maxDpr = 2,
+): void {
+  const c = ctx.canvas;
+  ctx.clearRect(0, 0, c.width, c.height);
+  const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
+  const r = 80 * dpr;
+  for (const s of samples) {
+    const x = s.x * dpr;
+    const y = s.y * dpr;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(255, 64, 64, 0.42)');
+    g.addColorStop(0.45, 'rgba(255, 140, 40, 0.18)');
+    g.addColorStop(1, 'rgba(255, 200, 0, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
 }

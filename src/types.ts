@@ -50,6 +50,9 @@ export interface EyeFeatures {
   featureVector: number[];
   /** 1 when both eyes are cleanly bounded, else 0. */
   confidence: number;
+  /** Per-eye openness/visibility quality in [0,1] (drives readouts + box color). */
+  leftQuality: number;
+  rightQuality: number;
 }
 
 /** One calibration observation: averaged features while looking at a target. */

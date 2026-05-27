@@ -2,316 +2,528 @@ import './style.css';
 import { startCamera } from './camera';
 import { createFaceTracker, type FaceTracker } from './faceLandmarks';
 import { extractEyeFeatures } from './eyeFeatures';
-import {
-  clearGazeCanvas,
-  clearPreviewOverlay,
-  drawCalibrationTarget,
-  drawEyeBoxes,
-  drawGazeDot,
-  resizeCanvasToDisplaySize,
-} from './drawing';
-import {
-  startCalibration,
-  updateCalibration,
-  type CalibrationSample,
-  type CalibrationState,
-} from './calibration';
 import { fitGazeModel, type GazeModel } from './gazeModel';
-import type { EyeFeatures, FaceTrackingResult, Point } from './types';
+import { startCalibration, updateCalibration, type CalibrationState } from './calibration';
+import { clearCanvas, drawHeatmap, drawPreview, resizeCanvasToDisplaySize } from './drawing';
+import type { EyeFeatures, FaceTrackingResult } from './types';
 
-// GUI wiring: camera start/stop, face tracking, green eye boxes, the 9-point
-// calibration sweep, the calibrated gaze model, and the Print gaze red dot.
+// ── Constants ────────────────────────────────────────────────────────────
+const GAZE_SMOOTHING = 0.35; // EMA weight for the live dot
+const HEAT_MIN_MOVE = 16; // px the gaze must move before a new heat sample
+const HEAT_CAP = 220; // max retained heat samples
+const POINT_MS = 1500; // visual dwell per calibration point (≈ calibration.ts)
+const SANITY_MS = 1500; // collection window per sanity corner
+const SANITY_END_MS = 900; // pause before returning to live after sanity
+const SANITY_CORNERS = ['tl', 'tr', 'br', 'bl'] as const;
+type Corner = (typeof SANITY_CORNERS)[number];
 
+// ── Icons (inline monoline SVG) ──────────────────────────────────────────
+const svg = (inner: string): string =>
+  `<svg viewBox="0 0 18 18" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+const IC_CAMERA = svg('<rect x="2" y="5" width="14" height="10" rx="1.5"/><circle cx="9" cy="10" r="2.6"/><path d="M7 5 L8 3 L10 3 L11 5"/>');
+const IC_STOP = svg('<rect x="4.5" y="4.5" width="9" height="9" rx="0.6"/>');
+const IC_CALIB = svg('<circle cx="9" cy="9" r="6"/><circle cx="9" cy="9" r="2.5"/><circle cx="9" cy="9" r="0.6" fill="currentColor" stroke="none"/>');
+const IC_CORNERS = svg('<path d="M3 6 V3 H6 M12 3 H15 V6 M15 12 V15 H12 M6 15 H3 V12"/>');
+const IC_HEAT = svg('<circle cx="6.5" cy="11" r="3.5"/><circle cx="11.5" cy="8" r="2.8"/><circle cx="13.2" cy="12.5" r="1.6"/>');
+
+// ── DOM ──────────────────────────────────────────────────────────────────
 function requireEl<T extends Element>(selector: string): T {
   const el = document.querySelector<T>(selector);
   if (!el) throw new Error(`Missing required element: ${selector}`);
   return el;
 }
 
+const app = requireEl<HTMLDivElement>('#app');
 const video = requireEl<HTMLVideoElement>('#video');
+const stage = requireEl<HTMLDivElement>('#stage');
 const overlay = requireEl<HTMLCanvasElement>('#overlay');
-const gazeCanvas = requireEl<HTMLCanvasElement>('#gaze-canvas');
-const statusEl = requireEl<HTMLParagraphElement>('#status');
-const startBtn = requireEl<HTMLButtonElement>('#btn-start');
-const stopBtn = requireEl<HTMLButtonElement>('#btn-stop');
-const calibrateBtn = requireEl<HTMLButtonElement>('#btn-calibrate');
-const printBtn = requireEl<HTMLButtonElement>('#btn-print');
-const clearBtn = requireEl<HTMLButtonElement>('#btn-clear');
+const heatmap = requireEl<HTMLCanvasElement>('#heatmap');
+const gazeDot = requireEl<HTMLDivElement>('#gaze-dot');
+const calibLayer = requireEl<HTMLDivElement>('#calib');
+const calibDot = requireEl<HTMLSpanElement>('#calib-dot');
+const sanityLayer = requireEl<HTMLDivElement>('#sanity');
+const idleOverlay = requireEl<HTMLDivElement>('#idle-overlay');
+const camTagText = requireEl<HTMLSpanElement>('#cam-tag-text');
 
-const gazeCtx = gazeCanvas.getContext('2d');
-if (!gazeCtx) throw new Error('2D canvas context is unavailable');
-const overlayCtx = overlay.getContext('2d');
-if (!overlayCtx) throw new Error('2D canvas context is unavailable');
+const btnCamera = requireEl<HTMLButtonElement>('#btn-camera');
+const icCamera = requireEl<HTMLSpanElement>('#ic-camera');
+const lbCamera = requireEl<HTMLSpanElement>('#lb-camera');
+const btnCalibrate = requireEl<HTMLButtonElement>('#btn-calibrate');
+const btnSanity = requireEl<HTMLButtonElement>('#btn-sanity');
+const btnHeatmap = requireEl<HTMLButtonElement>('#btn-heatmap');
 
-// Cached so the per-frame render loop only touches the DOM when text changes.
-let lastStatus = '';
-function setStatus(message: string): void {
-  if (message === lastStatus) return;
-  lastStatus = message;
-  statusEl.textContent = message;
+const roLeft = requireEl<HTMLDivElement>('#ro-left');
+const roRight = requireEl<HTMLDivElement>('#ro-right');
+const valLeft = requireEl<HTMLSpanElement>('#val-left');
+const valRight = requireEl<HTMLSpanElement>('#val-right');
+const valFps = requireEl<HTMLSpanElement>('#val-fps');
+
+const logStrip = requireEl<HTMLButtonElement>('#log-strip');
+const logDot = requireEl<HTMLSpanElement>('#log-dot');
+const logMsg = requireEl<HTMLSpanElement>('#log-msg');
+const logTs = requireEl<HTMLSpanElement>('#log-ts');
+const logCaret = requireEl<HTMLSpanElement>('#log-caret');
+const logBody = requireEl<HTMLDivElement>('#log-body');
+
+function getCtx(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('2D canvas context is unavailable');
+  return ctx;
 }
+const overlayCtx = getCtx(overlay);
+const heatCtx = getCtx(heatmap);
 
-function resizeGazeCanvas(): void {
-  resizeCanvasToDisplaySize(gazeCanvas, window.innerWidth, window.innerHeight);
-}
+// Set the static button icons.
+btnCalibrate.querySelector('.ic')!.innerHTML = IC_CALIB;
+btnSanity.querySelector('.ic')!.innerHTML = IC_CORNERS;
+btnHeatmap.querySelector('.ic')!.innerHTML = IC_HEAT;
 
-function resizeOverlay(): void {
-  const rect = video.getBoundingClientRect();
-  resizeCanvasToDisplaySize(overlay, rect.width, rect.height);
-}
+// ── State ────────────────────────────────────────────────────────────────
+type AppState = 'idle' | 'live' | 'calib' | 'sanity';
+type Severity = 'ok' | 'warn' | 'err';
+interface LogEntry { ts: string; sev: Severity; msg: string }
 
-function resizeAll(): void {
-  resizeGazeCanvas();
-  resizeOverlay();
-}
-
-const onViewportChange = (): void => {
-  resizeAll();
-  // A resize / orientation change moves screen coordinates, so any existing
-  // calibration no longer maps correctly — drop it and ask to recalibrate.
-  if (gazeModel || calibration) invalidateCalibration();
-};
-window.addEventListener('resize', onViewportChange);
-window.addEventListener('orientationchange', onViewportChange);
-video.addEventListener('loadedmetadata', resizeOverlay);
-new ResizeObserver(resizeOverlay).observe(video);
-resizeAll();
-
-let cameraStarted = false;
-let streaming = false;
+let state: AppState = 'idle';
 let tracker: FaceTracker | null = null;
-let latestResult: FaceTrackingResult | null = null;
-// Active calibration run, or null when not calibrating.
-let calibration: CalibrationState | null = null;
-// Fitted gaze model, or null until a successful calibration.
 let gazeModel: GazeModel | null = null;
-// When on, the render loop predicts and redraws the gaze dot every frame so it
-// follows the user's gaze. Toggled by Print gaze; cleared by Clear dot.
-let liveGaze = false;
-// Exponentially-smoothed live gaze point, to damp per-frame jitter.
-let smoothedGaze: Point | null = null;
-// Once calibration ends, hold a steady status instead of live tracking text.
-let postCalibrationStatus: string | null = null;
+let calibration: CalibrationState | null = null;
+let calibPointStart = 0;
 
-// EMA weight for the live dot: lower = smoother but laggier.
-const GAZE_SMOOTHING = 0.35;
+let smoothedGaze: { x: number; y: number } | null = null;
+let heatmapOn = false;
+const heatSamples: { x: number; y: number }[] = [];
 
-const setLiveGaze = (on: boolean): void => {
-  liveGaze = on;
-  smoothedGaze = null; // start each tracking session fresh
-  printBtn.textContent = on ? 'Stop gaze' : 'Print gaze';
-};
+const log: LogEntry[] = [];
+let logOpen = false;
 
-const finishCalibration = (samples: CalibrationSample[]): void => {
-  calibration = null;
-  clearGazeCanvas(gazeCtx);
-  setLiveGaze(false);
-  calibrateBtn.disabled = false;
+// FPS tracking
+let fps = 0;
+let frameCount = 0;
+let fpsWindowStart = performance.now();
+
+// Sanity
+let sanityStep = -1;
+let sanityBuffer: { x: number; y: number }[] = [];
+const sanityDeltas: Partial<Record<Corner, number>> = {};
+let sanityTimer: number | undefined;
+let sanityEndTimer: number | undefined;
+
+// ── Logging ──────────────────────────────────────────────────────────────
+function tsNow(): string {
+  const d = new Date();
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function addLog(sev: Severity, msg: string): void {
+  log.unshift({ ts: tsNow(), sev, msg });
+  if (log.length > 120) log.length = 120;
+  const latest = log[0];
+  logDot.className = `tb-log-dot ${latest.sev}`;
+  logMsg.textContent = latest.msg;
+  logTs.textContent = latest.ts;
+  if (logOpen) renderLogBody();
+}
+
+function renderLogBody(): void {
+  // Oldest-first source + CSS column-reverse ⇒ newest at the top.
+  logBody.innerHTML = [...log]
+    .reverse()
+    .map(
+      (e) =>
+        `<div class="tb-log-entry"><span class="ts">${e.ts}</span>` +
+        `<span class="sev ${e.sev}">${e.sev.toUpperCase()}</span>` +
+        `<span class="msg">${e.msg}</span></div>`,
+    )
+    .join('');
+}
+
+logStrip.addEventListener('click', () => {
+  logOpen = !logOpen;
+  logBody.hidden = !logOpen;
+  logCaret.textContent = logOpen ? '▴' : '▾';
+  logStrip.setAttribute('aria-expanded', String(logOpen));
+  if (logOpen) renderLogBody();
+});
+
+// ── Readouts ─────────────────────────────────────────────────────────────
+function qClass(q: number): string {
+  return q >= 0.7 ? 'good' : q >= 0.45 ? 'warn' : 'err';
+}
+
+function updateReadouts(features: EyeFeatures | null): void {
+  if (state === 'idle') {
+    valLeft.textContent = '—';
+    valRight.textContent = '—';
+    valFps.textContent = '—';
+    roLeft.className = 'tb-readout';
+    roRight.className = 'tb-readout';
+    return;
+  }
+  valFps.textContent = String(fps);
+  if (features) {
+    valLeft.textContent = String(Math.round(features.leftQuality * 100));
+    valRight.textContent = String(Math.round(features.rightQuality * 100));
+    roLeft.className = `tb-readout ${qClass(features.leftQuality)}`;
+    roRight.className = `tb-readout ${qClass(features.rightQuality)}`;
+  } else {
+    valLeft.textContent = '—';
+    valRight.textContent = '—';
+    roLeft.className = 'tb-readout';
+    roRight.className = 'tb-readout';
+  }
+}
+
+// ── Buttons / state ──────────────────────────────────────────────────────
+function renderButtons(): void {
+  const live = state !== 'idle';
+  icCamera.innerHTML = live ? IC_STOP : IC_CAMERA;
+  lbCamera.textContent = live ? 'Stop' : 'Camera';
+  btnCamera.className = `tb-btn ${live ? 'danger' : 'primary'}`;
+
+  btnCalibrate.disabled = state !== 'live';
+  btnSanity.disabled = state !== 'live' || !gazeModel;
+  btnHeatmap.disabled = !live;
+  btnHeatmap.className = `tb-btn${heatmapOn ? ' active' : ''}`;
+}
+
+function setState(next: AppState): void {
+  state = next;
+  app.classList.toggle('calibrating', next === 'calib');
+  idleOverlay.classList.toggle('hidden', next !== 'idle');
+  calibLayer.hidden = next !== 'calib';
+  sanityLayer.hidden = next !== 'sanity';
+  camTagText.textContent = next === 'idle' ? 'STANDBY' : 'CAM 01';
+  if (next === 'idle' || next === 'calib') hideGazeDot();
+  renderButtons();
+}
+
+function hideGazeDot(): void {
+  gazeDot.classList.add('hidden');
+}
+
+// ── Heatmap ──────────────────────────────────────────────────────────────
+function resizeHeatmap(): void {
+  resizeCanvasToDisplaySize(heatmap, window.innerWidth, window.innerHeight, 2);
+}
+
+function maybeAddHeatSample(x: number, y: number): void {
+  if (!heatmapOn) return;
+  const last = heatSamples[heatSamples.length - 1];
+  if (!last || Math.hypot(last.x - x, last.y - y) > HEAT_MIN_MOVE) {
+    heatSamples.push({ x, y });
+    if (heatSamples.length > HEAT_CAP) heatSamples.shift();
+    drawHeatmap(heatCtx, heatSamples);
+  }
+}
+
+// ── Live gaze dot ────────────────────────────────────────────────────────
+function showGaze(features: EyeFeatures): void {
+  if (!gazeModel) {
+    hideGazeDot();
+    return;
+  }
+  const raw = gazeModel.predict(features.featureVector);
+  const target = { x: raw.x * window.innerWidth, y: raw.y * window.innerHeight };
+  smoothedGaze = smoothedGaze
+    ? {
+        x: smoothedGaze.x + GAZE_SMOOTHING * (target.x - smoothedGaze.x),
+        y: smoothedGaze.y + GAZE_SMOOTHING * (target.y - smoothedGaze.y),
+      }
+    : target;
+  gazeDot.style.left = `${smoothedGaze.x}px`;
+  gazeDot.style.top = `${smoothedGaze.y}px`;
+  gazeDot.classList.remove('hidden');
+  maybeAddHeatSample(smoothedGaze.x, smoothedGaze.y);
+  if (state === 'sanity' && sanityStep >= 0) {
+    sanityBuffer.push({ x: smoothedGaze.x, y: smoothedGaze.y });
+  }
+}
+
+// ── Calibration ──────────────────────────────────────────────────────────
+function renderCalibDot(): void {
+  if (!calibration) return;
+  const pt = calibration.points[calibration.index];
+  const elapsed = performance.now() - calibPointStart;
+  const s = Math.max(0, 1 - elapsed / POINT_MS);
+  calibDot.style.left = `${pt.x * window.innerWidth}px`;
+  calibDot.style.top = `${pt.y * window.innerHeight}px`;
+  calibDot.style.transform = `translate(-50%, -50%) scale(${s})`;
+}
+
+function finishCalibration(samples: CalibrationState['samples']): void {
   try {
     gazeModel = fitGazeModel(samples);
-    printBtn.disabled = false;
-    postCalibrationStatus = 'Calibrated — ready to print gaze';
+    addLog('ok', `Calibration complete · ${samples.length}/${samples.length} points`);
   } catch (err) {
     gazeModel = null;
-    printBtn.disabled = true;
-    postCalibrationStatus = `Calibration failed: ${
-      err instanceof Error ? err.message : 'could not fit gaze model'
-    }`;
+    addLog('err', `Calibration failed · ${err instanceof Error ? err.message : 'fit error'}`);
   }
-};
-
-const failCalibration = (message: string): void => {
   calibration = null;
-  gazeModel = null;
-  clearGazeCanvas(gazeCtx);
-  setLiveGaze(false);
-  calibrateBtn.disabled = false;
-  printBtn.disabled = true;
-  postCalibrationStatus = `Calibration failed: ${message}`;
-};
+  smoothedGaze = null;
+  setState('live');
+}
 
-// Calibration is screen-coordinate dependent, so a viewport change makes the
-// stored targets meaningless; invalidate and ask the user to recalibrate.
-const invalidateCalibration = (): void => {
-  calibration = null;
-  gazeModel = null;
-  setLiveGaze(false);
-  printBtn.disabled = true;
-  clearGazeCanvas(gazeCtx);
-  postCalibrationStatus = 'Viewport changed — please recalibrate';
-};
+// ── Sanity check ─────────────────────────────────────────────────────────
+function cornerCenter(c: Corner): { x: number; y: number } {
+  const m = 52; // 24px inset + 28px half of the 56px box
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const map = {
+    tl: { x: m, y: m },
+    tr: { x: w - m, y: m },
+    bl: { x: m, y: h - m },
+    br: { x: w - m, y: h - m },
+  } as const;
+  return map[c];
+}
 
-const stepCalibration = (now: number, features: EyeFeatures | null): void => {
-  const state = calibration;
-  if (!state) return;
-  updateCalibration(state, now, features);
-
-  if (state.phase === 'complete') {
-    finishCalibration(state.samples);
-    return;
+function setCornerActive(c: Corner | null): void {
+  for (const cc of SANITY_CORNERS) {
+    sanityLayer.querySelector(`.corner.${cc}`)!.classList.toggle('active', cc === c);
   }
-  if (state.phase === 'failed') {
-    failCalibration(state.error ?? 'Not enough samples.');
-    return;
-  }
+}
 
-  const label = `Calibration ${state.index + 1} / ${state.points.length}`;
-  clearGazeCanvas(gazeCtx);
-  drawCalibrationTarget(gazeCtx, state.points[state.index], label);
-  setStatus(
-    state.phase === 'collecting'
-      ? `${label} — look at the dot, hold still`
-      : `${label} — get ready…`,
-  );
-};
+function setCornerDelta(c: Corner, delta: number | null): void {
+  requireEl<HTMLSpanElement>(`#sanity-${c}`).textContent = delta == null ? 'Δ —' : `Δ ${delta}px`;
+}
+
+function startSanity(): void {
+  if (!gazeModel) return;
+  setState('sanity');
+  for (const c of SANITY_CORNERS) {
+    setCornerDelta(c, null);
+    delete sanityDeltas[c];
+  }
+  addLog('ok', 'Sanity check started · look at each corner');
+  sanityStep = 0;
+  sanityBuffer = [];
+  setCornerActive(SANITY_CORNERS[0]);
+
+  sanityTimer = window.setInterval(() => {
+    const c = SANITY_CORNERS[sanityStep];
+    if (sanityBuffer.length) {
+      const avg = sanityBuffer.reduce(
+        (a, p) => ({ x: a.x + p.x, y: a.y + p.y }),
+        { x: 0, y: 0 },
+      );
+      avg.x /= sanityBuffer.length;
+      avg.y /= sanityBuffer.length;
+      const tgt = cornerCenter(c);
+      const delta = Math.round(Math.hypot(avg.x - tgt.x, avg.y - tgt.y));
+      sanityDeltas[c] = delta;
+      setCornerDelta(c, delta);
+    }
+    sanityBuffer = [];
+    sanityStep += 1;
+    if (sanityStep >= SANITY_CORNERS.length) {
+      window.clearInterval(sanityTimer);
+      setCornerActive(null);
+      const vals = Object.values(sanityDeltas);
+      const avg = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+      addLog('ok', `Sanity check complete · avg ${avg}px deviation`);
+      sanityEndTimer = window.setTimeout(() => {
+        sanityStep = -1;
+        if (state === 'sanity') setState('live');
+      }, SANITY_END_MS);
+    } else {
+      setCornerActive(SANITY_CORNERS[sanityStep]);
+    }
+  }, SANITY_MS);
+}
+
+function cancelSanity(): void {
+  window.clearInterval(sanityTimer);
+  window.clearTimeout(sanityEndTimer);
+  sanityStep = -1;
+  sanityBuffer = [];
+  setCornerActive(null);
+}
+
+// ── Detection loop ───────────────────────────────────────────────────────
+function updateFps(now: number): void {
+  frameCount += 1;
+  const dt = now - fpsWindowStart;
+  if (dt >= 500) {
+    fps = Math.round((frameCount * 1000) / dt);
+    frameCount = 0;
+    fpsWindowStart = now;
+  }
+}
 
 const detectLoop = (): void => {
-  if (!streaming) return;
-  if (tracker && video.readyState >= 2 && video.videoWidth > 0) {
-    const now = performance.now();
-    latestResult = tracker.detect(video, now);
-    clearPreviewOverlay(overlayCtx);
+  if (state === 'idle' || !tracker) return;
+  const now = performance.now();
+  updateFps(now);
 
-    // Extract features and draw eye boxes whenever both eyes are tracked.
-    let features: EyeFeatures | null = null;
-    if (!latestResult.error && latestResult.hasFace) {
-      const f = extractEyeFeatures(latestResult);
+  let features: EyeFeatures | null = null;
+  let result: FaceTrackingResult | null = null;
+  if (video.readyState >= 2 && video.videoWidth > 0) {
+    result = tracker.detect(video, now);
+    clearCanvas(overlayCtx);
+    if (!result.error && result.hasFace) {
+      const f = extractEyeFeatures(result);
       if (f && f.confidence > 0) {
         features = f;
-        drawEyeBoxes(overlayCtx, f, {
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight,
-          mirror: true,
-        });
+        drawPreview(overlayCtx, f, result.landmarks, video.videoWidth, video.videoHeight, true);
       }
-    }
-    if (calibration) {
-      stepCalibration(now, features);
-    } else if (liveGaze && gazeModel) {
-      if (features) {
-        const raw = gazeModel.predict(features.featureVector);
-        smoothedGaze = smoothedGaze
-          ? {
-              x: smoothedGaze.x + GAZE_SMOOTHING * (raw.x - smoothedGaze.x),
-              y: smoothedGaze.y + GAZE_SMOOTHING * (raw.y - smoothedGaze.y),
-            }
-          : raw;
-        clearGazeCanvas(gazeCtx);
-        drawGazeDot(gazeCtx, smoothedGaze);
-        const x = Math.round(smoothedGaze.x * window.innerWidth);
-        const y = Math.round(smoothedGaze.y * window.innerHeight);
-        setStatus(`Gaze: x=${x}, y=${y}`);
-      } else {
-        // Tracking dropped this frame: keep the last dot, just report it.
-        setStatus('Gaze tracking — keep both eyes visible');
-      }
-    } else if (postCalibrationStatus) {
-      setStatus(postCalibrationStatus);
-    } else if (latestResult.error) {
-      setStatus(`Face tracker error: ${latestResult.error}`);
-    } else if (!latestResult.hasFace) {
-      setStatus('No face detected');
-    } else if (features) {
-      setStatus('Both eyes tracked');
-    } else {
-      setStatus('Face detected, eyes not stable');
     }
   }
+
+  updateReadouts(features);
+
+  if (state === 'calib' && calibration) {
+    updateCalibration(calibration, now, features);
+    if (calibration.index !== lastCalibIndex) {
+      lastCalibIndex = calibration.index;
+      calibPointStart = now;
+    }
+    if (calibration.phase === 'complete') {
+      finishCalibration(calibration.samples);
+    } else if (calibration.phase === 'failed') {
+      const msg = calibration.error ?? 'not enough samples';
+      calibration = null;
+      addLog('err', `Calibration failed · ${msg}`);
+      setState('live');
+    } else {
+      renderCalibDot();
+    }
+  } else if (features) {
+    showGaze(features);
+  } else if (state !== 'calib') {
+    hideGazeDot();
+  }
+
   requestAnimationFrame(detectLoop);
 };
 
-const stopCamera = (): void => {
-  streaming = false;
-  calibration = null;
-  gazeModel = null;
-  setLiveGaze(false);
-  postCalibrationStatus = null;
+let lastCalibIndex = -1;
+
+// ── Actions ──────────────────────────────────────────────────────────────
+async function handleStart(): Promise<void> {
+  if (state !== 'idle') return;
+  btnCamera.disabled = true;
+  addLog('ok', 'Requesting camera permission…');
+  try {
+    await startCamera(video);
+  } catch (err) {
+    addLog('err', err instanceof Error ? err.message : 'Camera failed to start.');
+    btnCamera.disabled = false;
+    return;
+  }
+  btnCamera.disabled = false;
+  resizeOverlay();
+  setState('live');
+  addLog('ok', `Camera ${video.videoWidth || '—'}×${video.videoHeight || '—'} acquired · loading face tracker…`);
+  try {
+    tracker = await createFaceTracker();
+    addLog('ok', 'MediaPipe FaceLandmarker loaded · calibrate to begin');
+    requestAnimationFrame(detectLoop);
+  } catch (err) {
+    addLog('err', `Face tracker error · ${err instanceof Error ? err.message : 'failed to load'}`);
+  }
+}
+
+function handleStop(): void {
+  if (state === 'idle') return;
+  cancelSanity();
   const stream = video.srcObject as MediaStream | null;
-  stream?.getTracks().forEach((track) => track.stop());
+  stream?.getTracks().forEach((t) => t.stop());
   video.srcObject = null;
   tracker?.close();
   tracker = null;
-  cameraStarted = false;
-  clearPreviewOverlay(overlayCtx);
-  clearGazeCanvas(gazeCtx);
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
-  calibrateBtn.disabled = true;
-  printBtn.disabled = true;
-  setStatus('Camera stopped');
-};
-
-startBtn.addEventListener('click', async () => {
-  if (cameraStarted) return;
-  startBtn.disabled = true;
-  setStatus('Requesting camera permission…');
-  try {
-    await startCamera(video);
-    cameraStarted = true;
-    stopBtn.disabled = false;
-    setStatus('Camera ready');
-    resizeOverlay();
-  } catch (err) {
-    setStatus(err instanceof Error ? err.message : 'Camera failed to start.');
-    startBtn.disabled = false;
-    return;
-  }
-
-  setStatus('Loading face tracker…');
-  try {
-    tracker = await createFaceTracker();
-    streaming = true;
-    calibrateBtn.disabled = false;
-    requestAnimationFrame(detectLoop);
-  } catch (err) {
-    setStatus(`Face tracker error: ${err instanceof Error ? err.message : 'failed to load'}`);
-  }
-});
-
-stopBtn.addEventListener('click', stopCamera);
-
-calibrateBtn.addEventListener('click', () => {
-  if (!streaming || !tracker) {
-    setStatus('Start the camera before calibrating.');
-    return;
-  }
-  if (calibration) return;
-  postCalibrationStatus = null;
   gazeModel = null;
-  setLiveGaze(false);
-  printBtn.disabled = true;
-  calibrateBtn.disabled = true;
-  clearGazeCanvas(gazeCtx);
+  calibration = null;
+  smoothedGaze = null;
+  heatmapOn = false;
+  heatSamples.length = 0;
+  clearCanvas(heatCtx);
+  clearCanvas(overlayCtx);
+  setState('idle');
+  updateReadouts(null);
+  addLog('warn', 'Camera released · tracking stopped');
+}
+
+function handleCalibrate(): void {
+  if (state !== 'live' || !tracker) return;
+  addLog('ok', 'Starting 9-point calibration · look at each target');
+  gazeModel = null;
+  smoothedGaze = null;
+  lastCalibIndex = 0;
+  calibPointStart = performance.now();
   calibration = startCalibration(performance.now());
-  setStatus('Calibration 1 / 9 — get ready…');
-});
+  setState('calib');
+  renderCalibDot();
+}
 
-// Toggles continuous gaze tracking: while on, the render loop redraws the dot
-// at the predicted gaze every frame. Click again (or Clear dot) to stop.
-printBtn.addEventListener('click', () => {
-  if (!gazeModel) {
-    setStatus('Run calibration before printing gaze.');
-    return;
-  }
-  if (liveGaze) {
-    setLiveGaze(false);
-    // Leave the last dot frozen on screen; Clear dot removes it.
-    postCalibrationStatus = 'Gaze tracking stopped';
+function handleSanity(): void {
+  if (state !== 'live' || !gazeModel) return;
+  startSanity();
+}
+
+function handleHeatmapToggle(): void {
+  if (state === 'idle') return;
+  heatmapOn = !heatmapOn;
+  if (!heatmapOn) {
+    heatSamples.length = 0;
+    clearCanvas(heatCtx);
+    addLog('ok', 'Heatmap cleared');
   } else {
-    setLiveGaze(true);
-    postCalibrationStatus = null;
+    addLog('ok', 'Heatmap accumulation enabled');
   }
+  renderButtons();
+}
+
+btnCamera.addEventListener('click', () => {
+  if (state === 'idle') void handleStart();
+  else handleStop();
+});
+btnCalibrate.addEventListener('click', handleCalibrate);
+btnSanity.addEventListener('click', handleSanity);
+btnHeatmap.addEventListener('click', handleHeatmapToggle);
+
+// ── Keyboard shortcuts ───────────────────────────────────────────────────
+window.addEventListener('keydown', (e) => {
+  const tag = (e.target as HTMLElement | null)?.tagName ?? '';
+  if (/input|textarea|select/i.test(tag)) return;
+  const k = e.key.toLowerCase();
+  if (k === 's' && state === 'idle') void handleStart();
+  else if (k === 'c' && state === 'live') handleCalibrate();
+  else if (k === 'v' && state === 'live') handleSanity();
+  else if (k === 'h' && state !== 'idle') handleHeatmapToggle();
+  else if (e.key === 'Escape' && state !== 'idle') handleStop();
 });
 
-clearBtn.addEventListener('click', () => {
-  setLiveGaze(false);
-  clearGazeCanvas(gazeCtx);
-  // Clear only the dot; keep the calibration / model intact.
-  if (gazeModel) postCalibrationStatus = 'Calibrated — ready to print gaze';
-  setStatus('Gaze dot cleared');
-});
+// ── Resize ───────────────────────────────────────────────────────────────
+function resizeOverlay(): void {
+  const r = stage.getBoundingClientRect();
+  resizeCanvasToDisplaySize(overlay, r.width, r.height);
+}
 
-stopBtn.disabled = true;
-calibrateBtn.disabled = true;
-printBtn.disabled = true;
-setStatus('Idle — click "Start camera" to begin');
+function onViewportChange(): void {
+  resizeOverlay();
+  resizeHeatmap();
+  if (heatmapOn) {
+    heatSamples.length = 0;
+    clearCanvas(heatCtx);
+  }
+  // A resize / orientation change moves screen coordinates, so a fitted model
+  // no longer maps correctly — drop it and ask for a recalibration.
+  if (gazeModel && state !== 'calib') {
+    gazeModel = null;
+    smoothedGaze = null;
+    hideGazeDot();
+    addLog('warn', 'Viewport changed · recalibrate to continue');
+    renderButtons();
+  }
+}
+
+window.addEventListener('resize', onViewportChange);
+window.addEventListener('orientationchange', onViewportChange);
+new ResizeObserver(resizeOverlay).observe(stage);
+
+// ── Init ─────────────────────────────────────────────────────────────────
+resizeHeatmap();
+resizeOverlay();
+setState('idle');
+addLog('ok', 'gaze-lite ready · no camera initialised');

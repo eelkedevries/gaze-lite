@@ -7,37 +7,103 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <title>gaze-lite</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
-    <!-- Full-viewport canvas for calibration targets and the red gaze dot. -->
-    <canvas id="gaze-canvas" class="gaze-canvas"></canvas>
+    <div class="app" id="app">
+      <div class="brandmark"><span class="dot"></span><span>gaze · lite</span></div>
 
-    <main class="page">
-      <header class="header">
-        <h1 class="title">gaze-lite</h1>
-        <p class="subtitle">Browser-only webcam gaze demo</p>
-      </header>
+      <!-- Full-viewport heatmap (the only full-screen canvas) -->
+      <canvas class="heatmap-canvas" id="heatmap"></canvas>
 
-      <section class="preview" aria-label="Camera preview">
-        <video id="video" class="preview__video" playsinline muted></video>
-        <canvas id="overlay" class="preview__overlay"></canvas>
-      </section>
+      <!-- Live gaze dot -->
+      <div class="gaze-dot hidden" id="gaze-dot"></div>
 
-      <div class="controls">
-        <button id="btn-start" type="button">Start camera</button>
-        <button id="btn-stop" type="button">Stop camera</button>
-        <button id="btn-calibrate" type="button">Run calibration</button>
-        <button id="btn-print" type="button">Print gaze</button>
-        <button id="btn-clear" type="button">Clear dot</button>
+      <!-- Calibration layer (only the shrinking red dot shows) -->
+      <div class="calib" id="calib" hidden>
+        <span class="calib-dot" id="calib-dot"></span>
       </div>
 
-      <p id="status" class="status" role="status" aria-live="polite">Idle</p>
+      <!-- Sanity-check corner markers -->
+      <div class="sanity" id="sanity" hidden>
+        <div class="corner tl"><span class="cross"></span><span class="corner-label">TL</span><span class="delta" id="sanity-tl">Δ —</span></div>
+        <div class="corner tr"><span class="cross"></span><span class="corner-label">TR</span><span class="delta" id="sanity-tr">Δ —</span></div>
+        <div class="corner bl"><span class="cross"></span><span class="corner-label">BL</span><span class="delta" id="sanity-bl">Δ —</span></div>
+        <div class="corner br"><span class="cross"></span><span class="corner-label">BR</span><span class="delta" id="sanity-br">Δ —</span></div>
+      </div>
 
-      <p class="privacy">
-        Camera frames are processed locally in your browser. No video or gaze
-        data is uploaded.
-      </p>
-    </main>
+      <!-- Idle splash -->
+      <div class="idle-overlay" id="idle-overlay">
+        <div class="frame">
+          <h1>Gaze · Lite</h1>
+          <p>
+            Browser-only webcam gaze demo. Start the camera, calibrate against
+            nine targets, then print your gaze. Everything runs locally — no
+            video leaves your device.
+          </p>
+        </div>
+      </div>
+
+      <!-- Unified toolbar -->
+      <div class="toolbar" id="toolbar">
+        <div class="tb-buttons">
+          <button class="tb-btn primary" id="btn-camera" type="button">
+            <span class="ic" id="ic-camera"></span><span class="lb" id="lb-camera">Camera</span>
+          </button>
+          <button class="tb-btn primary" id="btn-calibrate" type="button" disabled>
+            <span class="ic"></span><span class="lb">Calibrate</span>
+          </button>
+          <button class="tb-btn" id="btn-sanity" type="button" disabled>
+            <span class="ic"></span><span class="lb">Sanity</span>
+          </button>
+          <button class="tb-btn" id="btn-heatmap" type="button" disabled>
+            <span class="ic"></span><span class="lb">Heatmap</span>
+          </button>
+        </div>
+
+        <div class="tb-body">
+          <div class="tb-cam">
+            <div class="preview">
+              <div class="stage mirrored" id="stage">
+                <span class="cam-tag">
+                  <span class="ledline"></span><span id="cam-tag-text">STANDBY</span>
+                </span>
+                <video id="video" playsinline muted></video>
+                <canvas class="preview-overlay" id="overlay"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <div class="tb-side">
+            <div class="tb-readouts">
+              <div class="tb-readout" id="ro-left">
+                <span class="k">L</span><span class="v" id="val-left">—</span>
+              </div>
+              <div class="tb-readout" id="ro-right">
+                <span class="k">R</span><span class="v" id="val-right">—</span>
+              </div>
+              <div class="tb-readout">
+                <span class="k">FPS</span><span class="v" id="val-fps">—</span>
+              </div>
+            </div>
+
+            <button class="tb-log" id="log-strip" type="button" aria-expanded="false">
+              <span class="tb-log-dot ok" id="log-dot"></span>
+              <span class="tb-log-msg" id="log-msg">—</span>
+              <span class="tb-log-ts" id="log-ts"></span>
+              <span class="tb-log-caret" id="log-caret">▾</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="tb-log-body" id="log-body" hidden></div>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
