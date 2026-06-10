@@ -8,6 +8,7 @@ import type {
   EyeBox,
   EyeFeatures,
   FaceTrackingResult,
+  HeadPose,
   NormalisedPoint,
   Point,
 } from './types';
@@ -18,10 +19,10 @@ export type { EyeBox, EyeFeatures } from './types';
  * Version of the feature-vector layout below. Bump when the layout changes so
  * persisted calibrations from older layouts are discarded instead of misread.
  */
-export const FEATURE_VERSION = 2;
+export const FEATURE_VERSION = 3;
 
 /** Dimensionality of the feature vector produced by {@link extractEyeFeatures}. */
-export const FEATURE_DIM = 22;
+export const FEATURE_DIM = 24;
 
 /** Indices of the primary (per-eye, head-frame) gaze dims — used for outlier pruning. */
 export const PRIMARY_GAZE_DIMS = [0, 1, 2, 3] as const;
@@ -89,44 +90,103 @@ function eyeQuality(landmarks: NormalisedPoint[], idx: readonly number[]): numbe
   return Math.max(0, Math.min(1, (ear - 0.1) / 0.2));
 }
 
+// Below this determinant the head is turned so far that the projective
+// inversion is ill-conditioned (≳ ~78° yaw) — fall back to the planar method.
+const MIN_PROJECTION_DET = 0.2;
+
 /**
- * Eye-frame gaze offset for one eye: the iris centre relative to the
- * corner-to-corner midpoint, expressed in the eye's own 2-D frame (u along
- * the corner line, v perpendicular) and divided by the corner distance.
+ * Eye-in-head gaze offset for one eye, recovered by inverting the weak-
+ * perspective projection: the observed 2-D iris offset is expressed as
+ * a·P(R·x̂) + b·P(R·ŷ), where R is the head rotation and P projects camera
+ * space into (aspect-corrected, y-down) image space. Solving the 2×2 system
+ * for (a, b) yields the offset in the head's own frame — invariant to head
+ * roll/yaw/pitch by construction, and (after dividing by the de-foreshortened
+ * corner distance) to scale. Camera rotation is relative head rotation, so a
+ * moving phone is compensated the same way. Iris/eye landmark depth — the
+ * least reliable output — is never used; only the matrix-derived rotation.
  *
- * Working in 2-D ratios anchored to the corners is deliberate: it cancels
- * head roll exactly and distance/yaw foreshortening to first order, without
- * touching landmark z — the least reliable component for iris/eye points.
- * `fromIdx → toIdx` must run toward image-right when the head is upright so
- * both eyes share a sign convention (+u = image-right, +v = image-down).
- * Residual yaw/pitch effects are handled by the pose features.
+ * Signs: +a = subject's anatomical left, +b = up (head frame). Without a
+ * pose, falls back to the eye's corner-aligned 2-D frame (exact under roll
+ * only). `fromIdx → toIdx` must run along the head's +x̂ (toward the
+ * subject's left) so both eyes share the convention.
  */
-function eyeFrameGaze(
+function eyeInHeadGaze(
   landmarks: NormalisedPoint[],
   fromIdx: number,
   toIdx: number,
   irisIdx: number,
   aspect: number,
+  pose: HeadPose | null,
 ): Point {
   // Aspect-correct so x and y are in the same physical units before mixing.
   const fx = landmarks[fromIdx].x * aspect;
   const fy = landmarks[fromIdx].y;
   const tx = landmarks[toIdx].x * aspect;
   const ty = landmarks[toIdx].y;
-  const px = landmarks[irisIdx].x * aspect;
-  const py = landmarks[irisIdx].y;
-
+  const dx = landmarks[irisIdx].x * aspect - (fx + tx) / 2;
+  const dy = landmarks[irisIdx].y - (fy + ty) / 2;
   const ax = tx - fx;
   const ay = ty - fy;
-  const width = Math.max(Math.hypot(ax, ay), 1e-4);
-  const ux = ax / width;
-  const uy = ay / width;
-  const dx = px - (fx + tx) / 2;
-  const dy = py - (fy + ty) / 2;
+  const widthImg = Math.max(Math.hypot(ax, ay), 1e-4);
+
+  if (pose) {
+    // Head axes projected into image space (metric +y is up, image y is down).
+    const r = pose.rotation;
+    const e1 = { x: r[0][0], y: -r[1][0] };
+    const e2 = { x: r[0][1], y: -r[1][1] };
+    const det = e1.x * e2.y - e2.x * e1.y;
+    if (Math.abs(det) >= MIN_PROJECTION_DET) {
+      const a = (e2.y * dx - e2.x * dy) / det;
+      const b = (-e1.y * dx + e1.x * dy) / det;
+      // The corners lie along x̂, so their projected distance shrinks by
+      // |P(x̂)|; divide it out to recover the true (head-frame) eye width.
+      const width = widthImg / Math.max(Math.hypot(e1.x, e1.y), 0.2);
+      return { x: a / width, y: b / width };
+    }
+  }
+
+  // Planar fallback: the eye's own corner-aligned frame (cancels roll/scale).
+  const ux = ax / widthImg;
+  const uy = ay / widthImg;
   return {
-    x: (dx * ux + dy * uy) / width,
-    y: (-dx * uy + dy * ux) / width,
+    x: (dx * ux + dy * uy) / widthImg,
+    y: -(-dx * uy + dy * ux) / widthImg, // flip so +y is up, like the pose path
   };
+}
+
+// Approximate mid-eye position in the canonical face frame (cm): between the
+// eyes, slightly above and in front of the canonical origin. Constant errors
+// here only matter to second order (they rotate with the head).
+const EYE_CENTER_HEAD: [number, number, number] = [0, 2.8, 4.2];
+// Iris offset (fraction of corner distance) → tan(eyeball rotation):
+// corner distance ≈ 28 mm, eyeball radius ≈ 12 mm ⇒ ~2.33 per unit.
+const GAZE_TAN_PER_OFFSET = 2.33;
+const MIN_RAY_Z = 0.2;
+const MAX_RAY_CM = 300;
+
+/**
+ * Where the gaze ray meets the camera plane (z = 0), in centimetres. Built
+ * from the metric head pose and the eye-in-head gaze, this estimate is
+ * compensated for head/camera translation and rotation *by construction* —
+ * move the head (or the phone) while fixating, and it stays put. It is fed
+ * to the model as two features (not used directly): calibration learns the
+ * affine map from this plane to screen pixels and how much to trust it.
+ */
+function gazeRayIntersection(pose: HeadPose, gaze: Point): Point {
+  const r = pose.rotation;
+  const rot = (v: [number, number, number]): [number, number, number] => [
+    r[0][0] * v[0] + r[0][1] * v[1] + r[0][2] * v[2],
+    r[1][0] * v[0] + r[1][1] * v[1] + r[1][2] * v[2],
+    r[2][0] * v[0] + r[2][1] * v[1] + r[2][2] * v[2],
+  ];
+  const e = rot(EYE_CENTER_HEAD);
+  const eye: [number, number, number] = [pose.tx + e[0], pose.ty + e[1], pose.tz + e[2]];
+  // The face looks along the head's +z (toward the camera).
+  const dir = rot([GAZE_TAN_PER_OFFSET * gaze.x, GAZE_TAN_PER_OFFSET * gaze.y, 1]);
+  const s = -eye[2] / Math.max(dir[2], MIN_RAY_Z);
+  const clampCm = (v: number): number =>
+    v < -MAX_RAY_CM ? -MAX_RAY_CM : v > MAX_RAY_CM ? MAX_RAY_CM : v;
+  return { x: clampCm(eye[0] + s * dir[0]), y: clampCm(eye[1] + s * dir[1]) };
 }
 
 const bs = (b: Record<string, number> | null | undefined, name: string): number =>
@@ -137,12 +197,13 @@ const bs = (b: Record<string, number> | null | undefined, name: string): number 
  * when no face / too few landmarks are available. `aspect` is the video's
  * width/height (needed to make normalized coordinates isotropic).
  *
- * Feature-vector layout (FEATURE_VERSION = 2, FEATURE_DIM = 22):
+ * Feature-vector layout (FEATURE_VERSION = 3, FEATURE_DIM = 24):
  *
- *   0-3   per-eye eye-frame gaze offsets (Lx, Ly, Rx, Ry) — iris relative to
- *         the eye-corner midpoint in the eye's own corner-aligned 2-D frame,
- *         divided by eye width (roll- and scale-invariant by construction).
- *         The primary gaze signal.
+ *   0-3   per-eye eye-in-head gaze offsets (Lx, Ly, Rx, Ry) — the iris offset
+ *         de-projected into the head's own frame via the pose rotation and
+ *         divided by the de-foreshortened eye width (invariant to head/camera
+ *         roll, yaw, pitch, and scale by construction; +x = subject's left,
+ *         +y = up). The primary gaze signal.
  *   4-7   per-eye blendshape gaze (Lx, Ly, Rx, Ry) from the eyeLook* shapes,
  *         signed so +x is image-right and +y is image-down for both eyes —
  *         a learned, largely pose-independent second opinion on eye rotation.
@@ -151,12 +212,15 @@ const bs = (b: Record<string, number> | null | undefined, name: string): number 
  *         |tz| (distance, cm) — lets the model correct for head movement.
  *   14    inter-ocular distance in normalized image units (image-space
  *         distance proxy, backup for the metric one).
- *   15-17 quadratics of the combined gaze (cx², cy², cx·cy) — the standard
+ *   15-16 gaze-ray ∩ camera-plane intersection (x, y in cm) — a geometric
+ *         gaze estimate that already cancels head/camera translation and
+ *         rotation; calibration learns its mapping to pixels and its weight.
+ *   17-19 quadratics of the combined gaze (cx², cy², cx·cy) — the standard
  *         2nd-order screen-mapping terms (cx/cy = mean of dims 0-3 per axis).
- *   18-21 gaze × pose interactions (cx·|tz|, cy·|tz|, cx·yaw, cy·pitch) —
+ *   20-23 gaze × pose interactions (cx·|tz|, cy·|tz|, cx·yaw, cy·pitch) —
  *         screen offset per unit eye rotation grows with distance and turn.
  *
- * Dims 8-14 and 18-21 barely vary during a head-still calibration; the model
+ * Dims 8-14 and 20-23 barely vary during a head-still calibration; the model
  * standardizes with a floored divisor and L2-penalizes, so they only gain
  * weight when calibration actually exercises them (the head-sweep stage).
  */
@@ -197,13 +261,14 @@ export function extractEyeFeatures(
     ),
   );
 
-  // Corner order runs toward image-right: right eye outer(33)→inner(133),
-  // left eye inner(362)→outer(263).
+  // Corner order runs along the head's +x̂ (toward the subject's left, which
+  // is image-right when upright): right eye outer(33)→inner(133), left eye
+  // inner(362)→outer(263).
   const leftGaze = hasIris
-    ? eyeFrameGaze(lm, LEFT_EYE_INNER, LEFT_EYE_OUTER, LEFT_IRIS_CENTER, aspect)
+    ? eyeInHeadGaze(lm, LEFT_EYE_INNER, LEFT_EYE_OUTER, LEFT_IRIS_CENTER, aspect, pose)
     : { x: 0, y: 0 };
   const rightGaze = hasIris
-    ? eyeFrameGaze(lm, RIGHT_EYE_OUTER, RIGHT_EYE_INNER, RIGHT_IRIS_CENTER, aspect)
+    ? eyeInHeadGaze(lm, RIGHT_EYE_OUTER, RIGHT_EYE_INNER, RIGHT_IRIS_CENTER, aspect, pose)
     : { x: 0, y: 0 };
 
   // Blendshape gaze, signed so +x is image-right / +y is image-down for both
@@ -223,6 +288,7 @@ export function extractEyeFeatures(
 
   const cx = (leftGaze.x + rightGaze.x) / 2;
   const cy = (leftGaze.y + rightGaze.y) / 2;
+  const ray = pose && hasIris ? gazeRayIntersection(pose, { x: cx, y: cy }) : { x: 0, y: 0 };
 
   const featureVector = [
     leftGaze.x,
@@ -240,6 +306,8 @@ export function extractEyeFeatures(
     py,
     dist,
     faceScale,
+    ray.x,
+    ray.y,
     cx * cx,
     cy * cy,
     cx * cy,

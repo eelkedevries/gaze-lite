@@ -23,6 +23,7 @@ import type { EyeFeatures, FaceTrackingResult, FrameCrop } from './types';
 // sets fixation steadiness, beta opens the filter during saccades.
 const GAZE_FILTER = { minCutoff: 0.8, beta: 0.008, dCutoff: 1.0 };
 const FACE_LOST_HIDE_MS = 600; // hide the dot after this long without eyes
+const BLINK_HOLD_MAX_MS = 800; // longest the dot may be held by a "blink"
 const HEAT_MIN_MOVE = 16; // px the gaze must move before a new heat sample
 const HEAT_CAP = 220; // max retained heat samples
 
@@ -132,6 +133,8 @@ let lastCalibIndex = -1;
 
 const gazeFilter = new OneEuroFilter2D(GAZE_FILTER);
 let lastGazeMs = -Infinity; // last time the dot got a fresh, eyes-open update
+let blinkHolding = false;
+let blinkHoldStart = 0;
 let heatmapOn = false;
 const heatSamples: { x: number; y: number }[] = [];
 let dockTop = false;
@@ -348,10 +351,29 @@ function predictGazePx(features: EyeFeatures): { x: number; y: number } | null {
   return { x: raw.x * window.innerWidth, y: raw.y * window.innerHeight };
 }
 
+/**
+ * Blink hold for the live dot only. MediaPipe's blink blendshapes flutter
+ * (the model card admits MAD ≈ 0.2), so a single eye crossing a single
+ * threshold must not freeze the dot: require BOTH eyes to read closed, with
+ * hysteresis, and give up holding after a short cap so a stuck gate (squint,
+ * glasses) degrades to a jittery dot instead of a frozen one. Calibration /
+ * validation keep the stricter per-eye `eyesOpen` gate — there, false
+ * rejects only cost a few samples.
+ */
+function blinkHold(features: EyeFeatures, now: number): boolean {
+  const closed = Math.min(features.leftBlink, features.rightBlink);
+  const quality = Math.min(features.leftQuality, features.rightQuality);
+  const threshold = blinkHolding ? 0.4 : 0.6;
+  const isClosed = closed > threshold || quality < 0.08;
+  if (isClosed && !blinkHolding) blinkHoldStart = now;
+  blinkHolding = isClosed;
+  return isClosed && now - blinkHoldStart <= BLINK_HOLD_MAX_MS;
+}
+
 function showGaze(features: EyeFeatures | null, now: number): void {
   // During a blink (or a tracking dropout) hold the dot rather than letting
   // it jump: lid-covered irises produce garbage gaze, not data.
-  if (!features || !features.eyesOpen) {
+  if (!features || blinkHold(features, now)) {
     if (now - lastGazeMs > FACE_LOST_HIDE_MS) hideGazeDot();
     return;
   }
@@ -386,7 +408,7 @@ function renderCalibDot(now: number): void {
         : Math.ceil(SWEEP_MS / 1000);
     calibHint.innerHTML =
       'Keep looking at the dot' +
-      `<span class="calib-hint-sub">slowly turn &amp; move your head · ${remaining}s</span>`;
+      `<span class="calib-hint-sub">slowly turn &amp; move your head (or your phone) · ${remaining}s</span>`;
     return;
   }
 
@@ -586,10 +608,11 @@ const detectLoop = (): void => {
   }
   const now = performance.now();
 
-  // Run detection only when the camera delivered a new frame.
-  const hasNewFrame = supportsRVFC
-    ? frameReady
-    : video.currentTime !== lastVideoTime;
+  // Run detection only when the camera delivered a new frame. rVFC is the
+  // primary signal, but browsers tie it to frame *presentation* and may
+  // throttle it (transformed/occluded video), which used to stall the gaze
+  // dot — so a currentTime change also counts as a new frame.
+  const hasNewFrame = frameReady || video.currentTime !== lastVideoTime;
   frameReady = false;
   lastVideoTime = video.currentTime;
 

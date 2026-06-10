@@ -39,8 +39,11 @@ async function createLandmarker(delegate: 'GPU' | 'CPU'): Promise<FaceLandmarker
     runningMode: 'VIDEO',
     numFaces: 1,
     minFaceDetectionConfidence: 0.5,
-    minFacePresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5,
+    // Below the defaults (0.5) so tracking survives handheld camera motion
+    // and blur instead of dropping the face (which froze the gaze dot);
+    // downstream blink/EAR gates keep poor frames out of the model anyway.
+    minFacePresenceConfidence: 0.35,
+    minTrackingConfidence: 0.3,
     // Blendshapes feed blink gating + auxiliary eyeLook* gaze features; the
     // transformation matrix is the head-pose signal. The bundled
     // face_landmarker.task contains both submodels.

@@ -15,8 +15,12 @@ const MIN_CROP_FRACTION = 0.28; // never zoom in past ~3.6×
 // (fraction of crop size); zoom only on a relative size change this large.
 const CENTER_DEADBAND = 0.07;
 const ZOOM_DEADBAND = 0.12;
-// Easing time constants (seconds): follow gently, relax slower.
+// Easing time constants (seconds): follow gently, relax slower. When the
+// eyes are far off-centre (a quick head move, or the camera itself moving —
+// handheld phones), easing speeds up toward FAST_TAU so they are recentred
+// promptly instead of drifting back over half a second.
 const FOLLOW_TAU = 0.30;
+const FAST_TAU = 0.07;
 const RELAX_TAU = 0.8;
 // After this long without eyes, ease back out to the full frame.
 const LOST_TIMEOUT_MS = 800;
@@ -90,11 +94,19 @@ export class AutoFramer {
       this.targetCropW = full.width;
     }
 
-    // Exponential easing toward the target (frame-rate independent).
+    // Exponential easing toward the target (frame-rate independent), sped up
+    // in proportion to how far the eyes sit from the crop centre.
     const dt = this.lastUpdateMs === null ? 0 : (nowMs - this.lastUpdateMs) / 1000;
     this.lastUpdateMs = nowMs;
     const tracking = nowMs - this.lastSeenMs <= LOST_TIMEOUT_MS;
-    const k = dt > 0 ? 1 - Math.exp(-dt / (tracking ? FOLLOW_TAU : RELAX_TAU)) : 0;
+    let tau = RELAX_TAU;
+    if (tracking) {
+      const errFrac =
+        Math.hypot(this.targetCx - this.cx, this.targetCy - this.cy) /
+        Math.max(this.cropW, 1);
+      tau = FAST_TAU + (FOLLOW_TAU - FAST_TAU) / (1 + 14 * errFrac);
+    }
+    const k = dt > 0 ? 1 - Math.exp(-dt / tau) : 0;
     this.cx += (this.targetCx - this.cx) * k;
     this.cy += (this.targetCy - this.cy) * k;
     this.cropW += (this.targetCropW - this.cropW) * k;

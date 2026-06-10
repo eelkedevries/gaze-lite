@@ -58,7 +58,9 @@ deviation (Δpx) at each point and the average.
   quality-colored eye boxes in the preview. GPU inference where available,
   with automatic CPU fallback.
 - **Auto-framing**: the preview digitally pans/zooms to keep the detected
-  eyes centred (deadband + eased follow, like a virtual camera operator).
+  eyes centred (deadband + eased follow, like a virtual camera operator;
+  the easing speeds up when the eyes jump, so a moved camera re-centres
+  quickly).
 - Full-screen **9-point calibration + head-movement sweep** and an in-browser
   **cross-validated ridge-regression** gaze model that **compensates for head
   movement** (rotation, translation, and distance).
@@ -173,7 +175,8 @@ For a good calibration:
 - Use good, even lighting and keep your whole face visible to the camera.
 - Look directly at each target dot until it moves on.
 - Keep your head still during the nine points; move it **only** during the
-  centre-dot sweep stage (gently — turn, tilt, shift, lean in/out).
+  centre-dot sweep stage (gently — turn, tilt, shift, lean in/out; on a
+  phone, moving the device works too).
 
 ## Gaze estimation
 
@@ -184,10 +187,13 @@ built from your calibration samples (see `src/eyeFeatures.ts` and
 `src/gazeModel.ts`):
 
 - **Per-eye gaze offsets** — where the iris centre sits relative to the eye
-  corners, measured in each eye's own corner-aligned 2-D frame and divided by
-  the eye width. Anchoring to the corners makes the signal invariant to head
-  roll and scale by construction, and first-order-invariant to yaw
-  foreshortening, without relying on the (noisy) landmark depth.
+  corners, de-projected into the head's own frame: the observed 2-D offset is
+  decomposed along the head's x/y axes (known from the pose matrix) by
+  inverting the weak-perspective projection, then divided by the
+  de-foreshortened eye width. This makes the primary gaze signal invariant to
+  head **roll, yaw, pitch, and scale by construction** — and since a moving
+  camera is just relative head motion, a handheld phone is compensated the
+  same way — without relying on the (noisy) landmark depth.
 - **Blendshape gaze** — the eight `eyeLook*` coefficients, a learned,
   largely pose-independent second opinion on eyeball rotation.
 - **Head pose** — yaw/pitch/roll and metric translation decomposed from the
@@ -195,6 +201,13 @@ built from your calibration samples (see `src/eyeFeatures.ts` and
   to the camera), plus distance-scaled lateral offsets. These let the model
   **subtract head movement from the gaze estimate**; the calibration's head
   sweep supplies the data that gives these features their weights.
+- **A geometric gaze ray** — the eye centre (head translation + rotated
+  canonical eye offset) is cast along the eye-in-head gaze direction and
+  intersected with the camera plane. That intersection point is compensated
+  for head/camera translation *and* rotation by construction (on a phone the
+  screen moves with the camera, so this is exactly the right geometry); it
+  enters the model as two features whose pixel mapping and weight calibration
+  learns.
 - **Quadratic + interaction terms** — the standard second-order screen-mapping
   expansion of the combined gaze signal, plus gaze × distance and gaze × turn
   interactions (a fixed eye rotation spans more screen the farther you sit).
@@ -206,8 +219,11 @@ built from your calibration samples (see `src/eyeFeatures.ts` and
 - After calibration the gaze dot tracks **continuously**: each camera frame's
   features are fed through the model and the dot is redrawn at the predicted
   point, smoothed by a **One Euro filter** (adaptive low-pass: steady while
-  you fixate, fast during saccades), held during **blinks**, and clamped to
-  the viewport. Enable **Heatmap** to accumulate a warm density map of where
+  you fixate, fast during saccades) and clamped to the viewport. During a
+  **blink** the dot holds briefly (both lids must read closed, with
+  hysteresis and a short cap, so noisy blink estimates can't freeze it);
+  face tracking itself runs at reduced confidence thresholds so it survives
+  handheld camera motion instead of dropping out. Enable **Heatmap** to accumulate a warm density map of where
   you've looked, or run **Validate**, which shows five fixation points,
   samples the predicted gaze at each, and reports the measured deviation
   (Δpx) per point plus an average on a results screen.
@@ -246,10 +262,12 @@ particular:
 
 - **Approximate accuracy.** Gaze is estimated from a webcam-grade iris signal
   and a calibrated regression; expect rough, not pixel-accurate, results.
-- **Partially compensated head movement.** The model corrects for moderate
-  head rotation/translation around your calibrated position (do the head-sweep
-  stage!), but large pose changes — leaning far in, extreme turns, standing
-  up — still degrade accuracy. Recalibrate if you move a lot.
+- **Partially compensated head/camera movement.** The gaze features are
+  pose-invariant by construction and the model additionally learns
+  corrections from the head sweep, so moderate head rotation/translation —
+  or moving the phone — is compensated. Large pose changes (leaning far in,
+  extreme turns, standing up) still degrade accuracy. Recalibrate if you
+  move a lot.
 - **Sensitive to lighting and camera angle.** Poor or uneven lighting and
   off-axis cameras reduce landmark quality and accuracy.
 - **Glasses / reflections** can reduce robustness of eye and iris tracking.
