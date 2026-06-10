@@ -24,9 +24,10 @@
       <!-- Live gaze dot -->
       <div class="gaze-dot hidden" id="gaze-dot"></div>
 
-      <!-- Calibration layer (only the shrinking red dot shows) -->
+      <!-- Calibration layer (the shrinking red dot; hint text for the head sweep) -->
       <div class="calib" id="calib" hidden>
         <span class="calib-dot" id="calib-dot"></span>
+        <div class="calib-hint" id="calib-hint" hidden></div>
       </div>
 
       <!-- Validation target (full-screen, like calibration) -->
@@ -72,6 +73,15 @@
           <button class="tb-btn" id="btn-heatmap" type="button" disabled>
             <span class="ic"></span><span class="lb">Heatmap</span>
           </button>
+          <button
+            class="tb-btn active"
+            id="btn-frame"
+            type="button"
+            disabled
+            title="Keep the eyes centered in the preview"
+          >
+            <span class="ic"></span><span class="lb">Frame</span>
+          </button>
           <button class="tb-btn icon-only" id="btn-dock" type="button" title="Move toolbar">
             <span class="ic" id="ic-dock"></span>
           </button>
@@ -97,6 +107,9 @@
               </div>
               <div class="tb-readout" id="ro-right">
                 <span class="k">R</span><span class="v" id="val-right">—</span>
+              </div>
+              <div class="tb-readout">
+                <span class="k">Head</span><span class="v head" id="val-head">—</span>
               </div>
               <div class="tb-readout">
                 <span class="k">FPS</span><span class="v" id="val-fps">—</span>

@@ -254,6 +254,8 @@ body {
 .toolbar .tb-readout.good .v { color: var(--good); }
 .toolbar .tb-readout.warn .v { color: var(--warn); }
 .toolbar .tb-readout.err  .v { color: var(--gaze); }
+/* Head yaw/pitch readout is two short signed numbers; shrink to fit. */
+.toolbar .tb-readout .v.head { font-size: 11px; white-space: nowrap; }
 
 /* Log strip (collapsed) */
 .toolbar .tb-log {
@@ -378,13 +380,17 @@ body {
   overflow: hidden;
 }
 .preview .stage.mirrored { transform: scaleX(-1); }
+/* The video is panned/zoomed digitally (auto-framing): JS sets its intrinsic
+   pixel size and a translate+scale transform mapping the crop window onto the
+   stage. The transform stays on the compositor, so following the eyes is
+   cheap. The stage's overflow:hidden clips the rest of the frame. */
 .preview .stage video {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
   display: block;
+  will-change: transform;
 }
 .preview .stage .preview-overlay {
   position: absolute;
@@ -430,6 +436,7 @@ body {
 
 .gaze-dot {
   position: fixed;
+  left: 0; top: 0; /* moved via transform (compositor-only updates) */
   width: 14px; height: 14px;
   border-radius: 50%;
   background: var(--gaze);
@@ -441,7 +448,7 @@ body {
   pointer-events: none;
   z-index: 12;
   transition: opacity .25s;
-  will-change: left, top;
+  will-change: transform;
 }
 .gaze-dot.hidden { opacity: 0; }
 
@@ -485,6 +492,29 @@ body {
   transition: transform .08s linear;
   will-change: transform;
 }
+
+/* Head-sweep instruction shown under the centre dot */
+.calib-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, 64px);
+  max-width: min(420px, 86vw);
+  text-align: center;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  line-height: 1.6;
+  color: var(--fg-1);
+  text-wrap: balance;
+}
+.calib-hint .calib-hint-sub {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+.calib-hint[hidden] { display: none; }
 
 /* Validation target — a cyan fixation ring + dot at each point */
 .validate {

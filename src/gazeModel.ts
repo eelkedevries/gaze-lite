@@ -1,30 +1,41 @@
-// Maps an eye-feature vector to an on-screen gaze point using two small ridge
+// Maps an eye-feature vector to an on-screen gaze point using two ridge
 // regressions (feature vector → normalized screen x, and → screen y), fitted
-// from the 9 averaged calibration samples. Features are standardized for
-// numerical stability and an unpenalized intercept is included. No ML deps.
+// from per-frame calibration samples. Features are standardized (with a
+// floored divisor) and the intercept is unpenalized; the ridge strength is
+// chosen by leave-one-calibration-point-out cross-validation. No ML deps.
 
 import type { CalibrationSample, Point } from './types';
 
-// Ridge penalty (applied to feature weights, not the intercept). Sized to tame
-// the strong collinearity between the left/right iris features (both eyes move
-// together) so coefficients can't grow large and overshoot the screen.
-const RIDGE_LAMBDA = 1.0;
+// Ridge strengths tried by cross-validation, as fractions of the sample count
+// (XᵀX of standardized features has diagonal ≈ n, so this keeps the shrinkage
+// comparable across calibration lengths). The high end protects poor data.
+const LAMBDA_RATIOS = [1e-4, 1e-3, 1e-2, 0.05, 0.25];
+const FALLBACK_RATIO = 0.01;
 // Floor on the per-feature standard deviation. Without it, a feature that
-// barely varied during calibration gets a near-zero divisor, so any live drift
-// produces a huge standardized value and the prediction shoots off-screen.
+// barely varied during calibration gets a near-zero divisor, so any live
+// drift produces a huge standardized value and the prediction shoots
+// off-screen. Pose features sit at this floor until a head-sweep stage
+// actually exercises them.
 const STD_FLOOR = 1e-2;
-const MIN_SAMPLES = 3;
-const EPSILON = 1e-6;
+const MIN_GROUPS = 4;
+const MIN_SAMPLES = 24;
+const EPSILON = 1e-9;
 
 export interface GazeModel {
   /** Predicts a gaze point in normalized [0,1] viewport coordinates. */
   predict(features: number[]): Point;
+  /** Cross-validated RMS error per axis in normalized screen units. */
+  cvRmse: Point;
+  /** The selected ridge strength (per-sample ratio), for diagnostics. */
+  lambdaRatio: number;
 }
 
 export function fitGazeModel(samples: CalibrationSample[]): GazeModel {
-  if (samples.length < MIN_SAMPLES) {
+  const groups = new Set<number>();
+  for (const s of samples) if (s.pointIndex >= 0) groups.add(s.pointIndex);
+  if (samples.length < MIN_SAMPLES || groups.size < MIN_GROUPS) {
     throw new Error(
-      `need at least ${MIN_SAMPLES} calibration samples, got ${samples.length}`,
+      `need ≥${MIN_SAMPLES} samples over ≥${MIN_GROUPS} targets, got ${samples.length} over ${groups.size}`,
     );
   }
   const d = samples[0].featureVector.length;
@@ -64,21 +75,60 @@ export function fitGazeModel(samples: CalibrationSample[]): GazeModel {
   };
 
   const X = samples.map((s) => standardize(s.featureVector));
-  const wx = ridgeSolve(X, samples.map((s) => s.target.x), p);
-  const wy = ridgeSolve(X, samples.map((s) => s.target.y), p);
+  const yx = samples.map((s) => s.target.x);
+  const yy = samples.map((s) => s.target.y);
+
+  // Pick λ by leaving out one calibration point (all its frames) at a time.
+  // Auxiliary samples (pointIndex < 0, e.g. the head sweep) always train.
+  const folds = [...groups];
+  let bestRatio = FALLBACK_RATIO;
+  let bestErr = Infinity;
+  let bestRmse: Point = { x: NaN, y: NaN };
+  for (const ratio of LAMBDA_RATIOS) {
+    const lambda = ratio * samples.length;
+    let sqErrX = 0;
+    let sqErrY = 0;
+    let count = 0;
+    for (const fold of folds) {
+      const trainIdx: number[] = [];
+      const testIdx: number[] = [];
+      for (let i = 0; i < samples.length; i++) {
+        (samples[i].pointIndex === fold ? testIdx : trainIdx).push(i);
+      }
+      const wx = ridgeSolve(trainIdx.map((i) => X[i]), trainIdx.map((i) => yx[i]), p, lambda);
+      const wy = ridgeSolve(trainIdx.map((i) => X[i]), trainIdx.map((i) => yy[i]), p, lambda);
+      for (const i of testIdx) {
+        sqErrX += (dot(X[i], wx) - yx[i]) ** 2;
+        sqErrY += (dot(X[i], wy) - yy[i]) ** 2;
+        count += 1;
+      }
+    }
+    const err = sqErrX + sqErrY;
+    if (count > 0 && err < bestErr) {
+      bestErr = err;
+      bestRatio = ratio;
+      bestRmse = { x: Math.sqrt(sqErrX / count), y: Math.sqrt(sqErrY / count) };
+    }
+  }
+
+  const lambda = bestRatio * samples.length;
+  const wx = ridgeSolve(X, yx, p, lambda);
+  const wy = ridgeSolve(X, yy, p, lambda);
 
   return {
     predict(features: number[]): Point {
       const row = standardize(features);
-      let x = 0;
-      let y = 0;
-      for (let k = 0; k < p; k++) {
-        x += row[k] * wx[k];
-        y += row[k] * wy[k];
-      }
-      return { x: clamp01(x), y: clamp01(y) };
+      return { x: clamp01(dot(row, wx)), y: clamp01(dot(row, wy)) };
     },
+    cvRmse: bestRmse,
+    lambdaRatio: bestRatio,
   };
+}
+
+function dot(a: number[], b: number[]): number {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+  return s;
 }
 
 function clamp01(v: number): number {
@@ -87,7 +137,7 @@ function clamp01(v: number): number {
 
 // Builds and solves the ridge normal equations (XᵀX + λI')w = Xᵀy, where the
 // intercept (index 0) is left unpenalized.
-function ridgeSolve(X: number[][], y: number[], p: number): number[] {
+function ridgeSolve(X: number[][], y: number[], p: number, lambda: number): number[] {
   const A: number[][] = Array.from({ length: p }, () => new Array<number>(p).fill(0));
   const b = new Array<number>(p).fill(0);
   for (let r = 0; r < X.length; r++) {
@@ -97,7 +147,7 @@ function ridgeSolve(X: number[][], y: number[], p: number): number[] {
       for (let j = 0; j < p; j++) A[i][j] += xr[i] * xr[j];
     }
   }
-  for (let i = 1; i < p; i++) A[i][i] += RIDGE_LAMBDA;
+  for (let i = 1; i < p; i++) A[i][i] += lambda;
   return solveLinearSystem(A, b);
 }
 

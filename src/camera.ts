@@ -5,6 +5,9 @@ const PREFERRED_VIDEO: MediaTrackConstraints = {
   facingMode: 'user',
   width: { ideal: 1280 },
   height: { ideal: 720 },
+  // A steady ~30 fps beats occasional 60: detection is camera-bound anyway
+  // and the lower rate keeps phone CPUs/batteries comfortable.
+  frameRate: { ideal: 30 },
 };
 
 /**

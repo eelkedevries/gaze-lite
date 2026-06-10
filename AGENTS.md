@@ -37,13 +37,18 @@ frames are processed locally in the browser and are never uploaded.
 
 ## Source layout (`src/`)
 
-- `main.ts` — app entry, UI wiring
+- `main.ts` — app entry, UI wiring, detection/render loop
 - `camera.ts` — webcam / front-camera access
-- `faceLandmarks.ts` — MediaPipe FaceLandmarker wrapper
-- `eyeFeatures.ts` — eye boxes + feature extraction
-- `calibration.ts` — calibration sample collection
-- `gazeModel.ts` — features → on-screen gaze point
-- `drawing.ts` — canvas drawing (green eye boxes, red gaze dot)
+- `faceLandmarks.ts` — MediaPipe FaceLandmarker wrapper (landmarks,
+  blendshapes, head matrix; GPU→CPU delegate fallback)
+- `headPose.ts` — transformation matrix → yaw/pitch/roll + translation
+- `eyeFeatures.ts` — eye boxes + gaze feature vector (layout documented there)
+- `calibration.ts` — 9-point + head-sweep sample collection
+- `gazeModel.ts` — features → on-screen gaze point (ridge + CV)
+- `filters.ts` — One Euro filter (gaze dot smoothing)
+- `autoFrame.ts` — eye-centering digital pan/zoom for the preview
+- `persistence.ts` — localStorage save/restore of calibration samples
+- `drawing.ts` — canvas drawing (preview overlay, heatmap)
 - `types.ts` — shared types
 
 ## Conventions
